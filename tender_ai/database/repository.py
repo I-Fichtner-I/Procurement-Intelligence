@@ -27,6 +27,9 @@ from ..models.price import PricingResult
 from ..models.tender import Tender, TenderDocument, TenderStatus
 from ..pipeline.dedup import DuplicateDetector, DuplicateMatch
 from .models import (
+    RUN_ABORTED,
+    RUN_FINISHED,
+    RUN_RUNNING,
     CalculationRecord,
     DecisionRecord,
     DocumentExtractRecord,
@@ -749,14 +752,53 @@ class TenderRepository:
 
     # --- Laufprotokolle ----------------------------------------------------
     def start_run(self, sources: Iterable[str], query: dict[str, Any]) -> IngestRunRecord:
-        run = IngestRunRecord(sources=list(sources), query=_json_ready(query))
+        run = IngestRunRecord(sources=list(sources), query=_json_ready(query), status=RUN_RUNNING)
         self.session.add(run)
         self.session.flush()
         return run
 
+    def get_run(self, run_id: int) -> IngestRunRecord | None:
+        return self.session.get(IngestRunRecord, run_id)
+
+    def mark_stale_runs(self, older_than: timedelta = timedelta(hours=6)) -> int:
+        """Laeufe ohne Abschluss als abgebrochen markieren.
+
+        Ein abgestuerzter oder abgeschossener Prozess kann seinen Lauf nicht
+        mehr abschliessen. Beim naechsten Start wird er anhand seines Alters
+        erkannt und geschlossen - sonst zaehlt er ewig als "laeuft".
+        """
+        cutoff = utcnow() - older_than
+        stale = list(
+            self.session.scalars(
+                select(IngestRunRecord).where(
+                    IngestRunRecord.status == RUN_RUNNING,
+                    IngestRunRecord.started_at < cutoff,
+                )
+            )
+        )
+        for run in stale:
+            run.status = RUN_ABORTED
+            run.finished_at = run.finished_at or utcnow()
+        if stale:
+            self.session.flush()
+        return len(stale)
+
+    def abort_run(self, run: IngestRunRecord | int, error: str | None = None) -> None:
+        """Lauf als abgebrochen schliessen (Ausnahme im Rechercherlauf)."""
+        record = self.get_run(run) if isinstance(run, int) else run
+        if record is None:
+            return
+        record.status = RUN_ABORTED
+        record.finished_at = utcnow()
+        if error:
+            errors = list(record.errors or [])
+            errors.append({"source": None, "error": error})
+            record.errors = errors
+        self.session.flush()
+
     def finish_run(
         self,
-        run: IngestRunRecord,
+        run: IngestRunRecord | int,
         *,
         found: int,
         new: int,
@@ -764,16 +806,20 @@ class TenderRepository:
         duplicates: int,
         errors: list[dict[str, Any]],
         http_stats: dict[str, Any],
-    ) -> IngestRunRecord:
-        run.finished_at = utcnow()
-        run.found = found
-        run.new = new
-        run.updated = updated
-        run.duplicates = duplicates
-        run.errors = _json_ready(errors)
-        run.http_stats = _json_ready(http_stats)
+    ) -> IngestRunRecord | None:
+        record = self.get_run(run) if isinstance(run, int) else run
+        if record is None:
+            return None
+        record.finished_at = utcnow()
+        record.status = RUN_FINISHED
+        record.found = found
+        record.new = new
+        record.updated = updated
+        record.duplicates = duplicates
+        record.errors = _json_ready(errors)
+        record.http_stats = _json_ready(http_stats)
         self.session.flush()
-        return run
+        return record
 
     def last_runs(self, limit: int = 10) -> list[IngestRunRecord]:
         return list(

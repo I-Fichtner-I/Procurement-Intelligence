@@ -303,3 +303,72 @@ async def test_download_error_status_leaves_no_file(tmp_path: Path):
         assert list(tmp_path.glob("**/*")) == []
     finally:
         await client.aclose()
+
+
+# --- T-17: Cache-Eviction, Groessengrenze und Authorization im Schluessel -------
+async def test_expired_entries_are_evicted_on_client_start(tmp_path: Path):
+    directory = tmp_path / "cache"
+    cache = ResponseCache(directory, ttl_seconds=0)
+    stale = ResponseCache.make_key("GET", "https://x.invalid/alt")
+    cache.set(stale, status_code=200, content=b"alt")
+    assert list(directory.glob("*.json"))
+
+    client = build_http_client(config(cache_enabled=True, cache_ttl_seconds=0), directory)
+    try:
+        assert list(directory.glob("*.json")) == []
+    finally:
+        await client.aclose()
+
+
+def test_evict_expired_keeps_fresh_entries(tmp_path: Path):
+    cache = ResponseCache(tmp_path, ttl_seconds=3600)
+    fresh = ResponseCache.make_key("GET", "https://x.invalid/frisch")
+    cache.set(fresh, status_code=200, content=b"frisch")
+    assert cache.evict_expired() == 0
+    assert cache.get(fresh) is not None
+
+
+def test_prune_drops_oldest_entries_beyond_max(tmp_path: Path):
+    import os
+    import time
+
+    cache = ResponseCache(tmp_path, ttl_seconds=3600, max_entries=3)
+    now = time.time()
+    for index in range(5):
+        key = ResponseCache.make_key("GET", f"https://x.invalid/{index}")
+        cache.set(key, status_code=200, content=b"x")
+        # Speicherzeitpunkte auseinanderziehen (alle frisch), damit die
+        # LRU-Reihenfolge eindeutig ist.
+        stored_at = now - (10 - index)
+        os.utime(tmp_path / f"{key}.json", (stored_at, stored_at))
+
+    assert cache.prune() == 2
+    remaining = {file.name for file in tmp_path.glob("*.json")}
+    assert len(remaining) == 3
+    newest = ResponseCache.make_key("GET", "https://x.invalid/4")
+    oldest = ResponseCache.make_key("GET", "https://x.invalid/0")
+    assert f"{newest}.json" in remaining
+    assert f"{oldest}.json" not in remaining
+
+
+@respx.mock
+async def test_authorization_header_separates_cache_entries(tmp_path: Path):
+    route = respx.get("https://api.test.invalid/secret").mock(
+        side_effect=[httpx.Response(200, text="alice"), httpx.Response(200, text="bob")]
+    )
+    directory = tmp_path / "cache"
+    client = build_http_client(config(cache_enabled=True, cache_ttl_seconds=60), directory)
+    try:
+        alice = await client.get(
+            "https://api.test.invalid/secret", headers={"Authorization": "Bearer alice"}
+        )
+        bob = await client.get(
+            "https://api.test.invalid/secret", headers={"Authorization": "Bearer bob"}
+        )
+        assert alice.text == "alice"
+        assert bob.text == "bob"
+        assert route.call_count == 2
+        assert client.stats.cache_hits == 0
+        assert len(list(directory.glob("*.json"))) == 2
+    finally:
+        await client.aclose()

@@ -203,3 +203,153 @@ async def test_failed_upsert_keeps_other_records(settings: Settings, http_client
         }
         run = repository.last_runs(1)[0]
         assert run.new == 2 and any(e.get("tender_id") == "three:bad" for e in run.errors)
+
+
+# --- T-15: Persistenz blockiert den Event-Loop nicht ----------------------------
+class BulkSource(TenderSource):
+    """Liefert viele Treffer - genug, dass die Persistenz messbar dauert."""
+
+    type_name = "bulk"
+    count = 200
+
+    async def search(self, query: SearchQuery) -> list[Tender]:
+        return [
+            Tender(
+                id=f"bulk:{index}",
+                source="bulk",
+                source_id=str(index),
+                title=f"Lieferung Los {index}",
+                contracting_authority=f"Amt {index}",
+            )
+            for index in range(self.count)
+        ]
+
+
+async def test_persistence_keeps_event_loop_responsive(settings: Settings, http_client: HttpClient):
+    """Waehrend gespeichert wird, kommen andere Tasks weiter zum Zug."""
+    import asyncio
+
+    from tender_ai.database.session import session_factory
+
+    source = BulkSource("bulk", settings.sources["fixture"], http_client, settings)
+    service = IngestService(
+        settings,
+        [source],
+        http_client,
+        session_factory=session_factory(settings.database_url),
+    )
+
+    ticks = 0
+    stop = False
+
+    async def heartbeat() -> None:
+        nonlocal ticks
+        while not stop:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    beat = asyncio.create_task(heartbeat())
+    try:
+        report = await service.run(SearchQuery(max_results=500))
+    finally:
+        stop = True
+        await beat
+
+    assert report.new == BulkSource.count
+    # Ohne to_thread liefe die Persistenz am Stueck durch und der Zaehler
+    # bliebe bei der Handvoll Ticks der await-Punkte des Laufs stehen.
+    assert ticks > 100, f"Event-Loop war waehrend der Persistenz blockiert ({ticks} Ticks)"
+
+    with session_scope(settings.database_url) as session:
+        repository = TenderRepository(session, settings.dedup)
+        assert repository.count(only_primary=False) == BulkSource.count
+
+
+async def test_session_and_factory_are_mutually_exclusive(
+    settings: Settings, http_client: HttpClient
+):
+    from tender_ai.database.session import session_factory
+
+    with session_scope(settings.database_url) as session, pytest.raises(ValueError):
+        IngestService(
+            settings,
+            [],
+            http_client,
+            session=session,
+            session_factory=session_factory(settings.database_url),
+        )
+
+
+# --- T-20: Laufstatus und verwaiste Laeufe -------------------------------------
+async def test_run_is_marked_finished(settings: Settings, http_client: HttpClient):
+    with session_scope(settings.database_url) as session:
+        sources = build_sources(settings, http_client, only=["fixture"])
+        service = IngestService(settings, sources, http_client, session=session)
+        await service.run(SearchQuery(max_results=10))
+        run = TenderRepository(session, settings.dedup).last_runs(1)[0]
+        assert run.status == "finished"
+        assert run.finished_at is not None
+
+
+async def test_crashing_run_is_marked_aborted(settings: Settings, http_client: HttpClient):
+    """Ein Absturz im Lauf hinterlaesst keinen ewig 'laufenden' Eintrag."""
+    with session_scope(settings.database_url) as session:
+        sources = build_sources(settings, http_client, only=["fixture"])
+        service = IngestService(settings, sources, http_client, session=session)
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("Abbruch mitten im Lauf")
+
+        service._collect = boom  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError):
+            await service.run(SearchQuery(max_results=10))
+
+        run = TenderRepository(session, settings.dedup).last_runs(1)[0]
+        assert run.status == "aborted"
+        assert run.finished_at is not None
+        assert any("Abbruch mitten im Lauf" in (e.get("error") or "") for e in run.errors)
+
+
+async def test_stale_running_run_is_closed_on_next_start(
+    settings: Settings, http_client: HttpClient
+):
+    from datetime import timedelta
+
+    from tender_ai.models.common import utcnow
+
+    with session_scope(settings.database_url) as session:
+        repository = TenderRepository(session, settings.dedup)
+        stale = repository.start_run(["fixture"], {})
+        stale.started_at = utcnow() - timedelta(hours=7)
+        session.commit()
+
+        sources = build_sources(settings, http_client, only=["fixture"])
+        service = IngestService(settings, sources, http_client, session=session)
+        await service.run(SearchQuery(max_results=10))
+
+        session.refresh(stale)
+        assert stale.status == "aborted"
+        assert stale.finished_at is not None
+        # Der frische Lauf bleibt davon unberuehrt.
+        assert repository.last_runs(2)[0].status == "finished"
+
+
+# --- T-21: run_id und source im Logkontext --------------------------------------
+async def test_log_events_carry_run_id_and_source(settings: Settings, http_client: HttpClient):
+    from structlog.contextvars import get_contextvars, merge_contextvars
+    from structlog.testing import capture_logs
+
+    with session_scope(settings.database_url) as session:
+        source = BrokenSource("kaputt", settings.sources["fixture"], http_client, settings)
+        service = IngestService(settings, [source], http_client, session=session)
+        # merge_contextvars ist auch produktiv der erste Prozessor (core.logging).
+        with capture_logs([merge_contextvars]) as logs:
+            await service.run(SearchQuery(max_results=10))
+
+    failed = next(entry for entry in logs if entry["event"] == "source_failed")
+    assert failed["source"] == "kaputt"
+    assert failed["run_id"] is not None
+
+    # Nach dem Lauf ist der Kontext wieder leer - sonst faerbte ein Lauf die
+    # Logzeilen aller folgenden ein.
+    assert get_contextvars() == {}

@@ -470,6 +470,12 @@ class DecisionRecord(Base):
     tender: Mapped[TenderRecord] = relationship(back_populates="decisions")
 
 
+#: Zustaende eines Rechercherlaufs.
+RUN_RUNNING = "running"
+RUN_FINISHED = "finished"
+RUN_ABORTED = "aborted"
+
+
 class IngestRunRecord(Base):
     """Protokoll eines Rechercherlaufs - fuer Nachvollziehbarkeit und Scheduler."""
 
@@ -478,6 +484,9 @@ class IngestRunRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    #: running -> finished | aborted. Ein abgebrochener Lauf (Absturz, Kill)
+    #: bleibt sonst fuer immer als "laeuft" stehen und verfaelscht das Protokoll.
+    status: Mapped[str] = mapped_column(String(16), default=RUN_RUNNING, server_default=RUN_RUNNING)
     sources: Mapped[list[str]] = mapped_column(JSON, default=list)
     query: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     found: Mapped[int] = mapped_column(Integer, default=0)

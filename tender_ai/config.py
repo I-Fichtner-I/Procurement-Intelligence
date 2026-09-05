@@ -41,6 +41,9 @@ class HttpConfig(BaseModel):
     requests_per_second: float = 1.0
     cache_enabled: bool = True
     cache_ttl_seconds: int = 900
+    #: Obergrenze fuer die Zahl gespeicherter Antworten; darueber verdraengt
+    #: der Cache die aeltesten Eintraege (LRU nach Speicherzeitpunkt).
+    cache_max_entries: int = 5000
     #: Obergrenze fuer einen einzelnen Dateidownload (Vergabeunterlagen).
     max_download_bytes: int = 50_000_000
     #: Obergrenze fuer eine Feed-Antwort - schuetzt den XML-Parser vor
@@ -53,7 +56,8 @@ class SearchConfig(BaseModel):
     cpv_codes: list[str] = Field(default_factory=list)
     countries: list[str] = Field(default_factory=lambda: ["DEU"])
     published_within_days: int = 14
-    min_days_until_deadline: int = 0
+    #: Auch Mindestkriterium der Stufe 5 (Restfrist) - siehe CriteriaConfig.
+    min_days_until_deadline: int = 3
     max_results_per_source: int = 100
 
 
@@ -396,7 +400,8 @@ class CriteriaConfig(BaseModel):
     minimum_roi_percent: float = 20.0
     maximum_risk_score: int = 40
     minimum_match_confidence: int = 85
-    minimum_days_until_deadline: int = 3
+    # Die Restfrist steht in SearchConfig.min_days_until_deadline - ein Wert
+    # fuer Recherche und Bewertung, sonst widersprechen sich beide.
     preferred_currencies: list[str] = Field(default_factory=lambda: ["EUR"])
     excluded_categories: list[str] = Field(default_factory=list)
 

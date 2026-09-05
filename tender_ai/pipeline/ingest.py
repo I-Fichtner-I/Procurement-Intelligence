@@ -8,17 +8,25 @@ priorisierte Quelle zur Primaerquelle.
 
 Persistenz je Datensatz in einem Savepoint: ein fehlerhafter Datensatz kostet
 genau diesen Datensatz, nie die bereits gespeicherten derselben Quelle.
+
+Die Datenbankarbeit ist blockierend und laeuft deshalb in einem Thread
+(``asyncio.to_thread``): waehrend eine Quelle gespeichert wird, bleibt der
+Event-Loop fuer die uebrigen Abrufe und Timeouts ansprechbar. Ueber die
+Threadgrenze gehen nur einfache Werte - Berichte und IDs, nie ORM-Objekte.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
+from structlog.contextvars import bound_contextvars
 
 from ..config import Settings
 from ..core.http import HttpClient
@@ -28,6 +36,9 @@ from ..models.tender import Tender
 from ..sources.base import SearchQuery, TenderSource
 
 log = get_logger(__name__)
+
+#: Oeffnet eine neue Session; die Persistenz schliesst sie selbst wieder.
+SessionFactory = Callable[[], Session]
 
 
 @dataclass(slots=True)
@@ -125,108 +136,100 @@ class IngestReport:
         }
 
 
+@dataclass(slots=True)
+class PersistOutcome:
+    """Ergebnis der Persistenz einer Quelle - bewusst ohne ORM-Objekte.
+
+    Nur einfache Werte gehen ueber die Threadgrenze zurueck in den Event-Loop.
+    """
+
+    report: SourceReport
+    new_ids: list[str] = field(default_factory=list)
+    updated_ids: list[str] = field(default_factory=list)
+    record_errors: list[dict[str, Any]] = field(default_factory=list)
+
+
 class IngestService:
+    """Orchestriert einen Rechercherlauf.
+
+    Entweder ``session`` (eine laufende Transaktion, z. B. in Tests) oder
+    ``session_factory`` (Regelfall: jede Schreibeinheit oeffnet ihre eigene
+    Session im Thread) - nie beides.
+    """
+
     def __init__(
         self,
         settings: Settings,
         sources: Sequence[TenderSource],
         http: HttpClient,
         session: Session | None = None,
+        session_factory: SessionFactory | None = None,
     ) -> None:
+        if session is not None and session_factory is not None:
+            raise ValueError("entweder session oder session_factory angeben, nicht beides")
         self.settings = settings
         self.sources = list(sources)
         self.http = http
         self.session = session
-        self.repository = (
-            TenderRepository(
-                session,
-                dedup_config=settings.dedup,
-                source_priority={name: cfg.priority for name, cfg in settings.sources.items()},
-            )
-            if session is not None
-            else None
+        self.session_factory = session_factory
+        self.repository = self._repository(session) if session is not None else None
+
+    @property
+    def persists(self) -> bool:
+        """Kann dieser Lauf ueberhaupt speichern?"""
+        return self.session is not None or self.session_factory is not None
+
+    def _repository(self, session: Session) -> TenderRepository:
+        return TenderRepository(
+            session,
+            dedup_config=self.settings.dedup,
+            source_priority={name: cfg.priority for name, cfg in self.settings.sources.items()},
         )
+
+    @contextmanager
+    def _unit_of_work(self) -> Iterator[TenderRepository]:
+        """Repository fuer eine abgeschlossene Schreibeinheit.
+
+        Mit ``session_factory`` bekommt jede Einheit ihre eigene Session und
+        gibt sie am Ende wieder frei - so haelt kein Vorgang eine
+        Schreibtransaktion offen, waehrend eine andere Einheit schreibt.
+        """
+        if self.session is not None:
+            assert self.repository is not None
+            yield self.repository
+            self.session.commit()
+            return
+        assert self.session_factory is not None
+        session = self.session_factory()
+        try:
+            yield self._repository(session)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     async def _search_one(
         self, source: TenderSource, query: SearchQuery
     ) -> tuple[TenderSource, list[Tender] | Exception, float]:
         loop = asyncio.get_running_loop()
         started = loop.time()
-        try:
-            results = await source.search(query)
-        except Exception as exc:  # noqa: BLE001 - eine Quelle darf nie den Gesamtlauf beenden
-            log.error("source_failed", source=source.name, error=str(exc))
-            return source, exc, loop.time() - started
-        return source, results, loop.time() - started
-
-    def _persist_one(self, tender: Tender) -> UpsertResult:
-        """Einen Datensatz in einem Savepoint speichern.
-
-        Bei einer Exception rollt SQLAlchemy nur den Savepoint zurueck; die
-        vorher geflushten Datensaetze derselben Quelle bleiben erhalten.
-        """
-        assert self.repository is not None and self.session is not None
-        with self.session.begin_nested():
-            return self.repository.upsert(tender)
-
-    def _persist_source(
-        self, source: TenderSource, tenders: Sequence[Tender], report: IngestReport
-    ) -> SourceReport:
-        source_report = SourceReport(name=source.name, type=source.type_name, found=len(tenders))
-        assert self.session is not None
-        for tender in tenders:
+        with bound_contextvars(source=source.name):
             try:
-                result = self._persist_one(tender)
-            except Exception as exc:  # noqa: BLE001 - ein defekter Datensatz kostet nur sich selbst
-                log.error("persist_failed", tender=tender.id, error=str(exc))
-                source_report.failed += 1
-                source_report.failed_ids.append(tender.id)
-                report.record_errors.append(
-                    {"source": source.name, "tender_id": tender.id, "error": str(exc)}
-                )
-                continue
+                results = await source.search(query)
+            except Exception as exc:  # noqa: BLE001 - eine Quelle darf nie den Gesamtlauf beenden
+                log.error("source_failed", source=source.name, error=str(exc))
+                return source, exc, loop.time() - started
+            return source, results, loop.time() - started
 
-            # Zaehler erst nach erfolgreichem Savepoint erhoehen.
-            if result.action == "new":
-                source_report.new += 1
-                report.new_tender_ids.append(result.record.id)
-            elif result.action == "updated":
-                source_report.updated += 1
-                report.updated_tender_ids.append(result.record.id)
-                log.info(
-                    "tender_changed",
-                    tender=result.record.id,
-                    changes=[change[0] for change in result.changes],
-                )
-            elif result.action == "duplicate":
-                source_report.duplicates += 1
-                log.info(
-                    "duplicate_detected",
-                    tender=result.record.id,
-                    duplicate_of=result.duplicate_of,
-                    reason=result.duplicate_reason,
-                    confidence=result.duplicate_confidence,
-                )
-            else:
-                source_report.unchanged += 1
-        self.session.commit()
-        return source_report
-
-    async def run(
-        self,
-        query: SearchQuery,
-        *,
-        store: bool = True,
-        download_documents: bool = False,
-    ) -> IngestReport:
-        report = IngestReport(stored=store and self.repository is not None)
-        if not self.sources:
-            log.warning("no_sources_enabled")
-            return report
-
-        run_record = None
-        if self.repository is not None and store:
-            run_record = self.repository.start_run(
+    # --- Datenbankarbeit (laeuft ueber ``asyncio.to_thread``) ----------------
+    def _begin_run(self, query: SearchQuery) -> int | None:
+        with self._unit_of_work() as repository:
+            stale = repository.mark_stale_runs()
+            if stale:
+                log.warning("stale_runs_aborted", runs=stale)
+            run = repository.start_run(
                 [source.name for source in self.sources],
                 {
                     "keywords": query.keywords,
@@ -236,53 +239,75 @@ class IngestService:
                     "max_results": query.max_results,
                 },
             )
+            return run.id
 
-        results = await asyncio.gather(
-            *(self._search_one(source, query) for source in self.sources)
+    def _persist_source(
+        self, source_name: str, source_type: str, tenders: Sequence[Tender]
+    ) -> PersistOutcome:
+        """Alle Treffer einer Quelle speichern - je Datensatz ein Savepoint."""
+        outcome = PersistOutcome(
+            report=SourceReport(name=source_name, type=source_type, found=len(tenders))
         )
-
-        # Persistenz sequenziell in Prioritaetsreihenfolge
-        for source, outcome, duration in sorted(results, key=lambda item: item[0].priority):
-            if isinstance(outcome, Exception):
-                source_report = SourceReport(
-                    name=source.name,
-                    type=source.type_name,
-                    ok=False,
-                    error=f"{type(outcome).__name__}: {outcome}",
-                    duration_seconds=duration,
-                )
-                if self.repository is not None:
-                    self.repository.update_source_state(
-                        source.name, source.type_name, success=False, error=source_report.error
+        source_report = outcome.report
+        with self._unit_of_work() as repository:
+            for tender in tenders:
+                try:
+                    # Bei einer Exception rollt SQLAlchemy nur den Savepoint
+                    # zurueck; die vorher geflushten Datensaetze bleiben.
+                    with repository.session.begin_nested():
+                        result: UpsertResult = repository.upsert(tender)
+                except Exception as exc:  # noqa: BLE001 - ein defekter Datensatz kostet nur sich selbst
+                    log.error("persist_failed", tender=tender.id, error=str(exc))
+                    source_report.failed += 1
+                    source_report.failed_ids.append(tender.id)
+                    outcome.record_errors.append(
+                        {"source": source_name, "tender_id": tender.id, "error": str(exc)}
                     )
-                report.sources.append(source_report)
-                continue
+                    continue
 
-            tenders = outcome
-            report.tenders.extend(tenders)
+                # Zaehler erst nach erfolgreichem Savepoint erhoehen.
+                if result.action == "new":
+                    source_report.new += 1
+                    outcome.new_ids.append(result.record.id)
+                elif result.action == "updated":
+                    source_report.updated += 1
+                    outcome.updated_ids.append(result.record.id)
+                    log.info(
+                        "tender_changed",
+                        tender=result.record.id,
+                        changes=[change[0] for change in result.changes],
+                    )
+                elif result.action == "duplicate":
+                    source_report.duplicates += 1
+                    log.info(
+                        "duplicate_detected",
+                        tender=result.record.id,
+                        duplicate_of=result.duplicate_of,
+                        reason=result.duplicate_reason,
+                        confidence=result.duplicate_confidence,
+                    )
+                else:
+                    source_report.unchanged += 1
+        return outcome
 
-            if download_documents:
-                await self._download_documents(source, tenders)
+    def _record_source_state(
+        self,
+        name: str,
+        source_type: str,
+        *,
+        success: bool,
+        result_count: int = 0,
+        error: str | None = None,
+    ) -> None:
+        with self._unit_of_work() as repository:
+            repository.update_source_state(
+                name, source_type, success=success, result_count=result_count, error=error
+            )
 
-            if self.repository is not None and store:
-                source_report = self._persist_source(source, tenders, report)
-            else:
-                source_report = SourceReport(
-                    name=source.name, type=source.type_name, found=len(tenders)
-                )
-            source_report.duration_seconds = duration
-
-            if self.repository is not None:
-                self.repository.update_source_state(
-                    source.name, source.type_name, success=True, result_count=len(tenders)
-                )
-            report.sources.append(source_report)
-
-        report.http_stats = self.http.stats.as_dict()
-
-        if self.repository is not None and run_record is not None and self.session is not None:
-            self.repository.finish_run(
-                run_record,
+    def _finish_run(self, run_id: int, report: IngestReport) -> None:
+        with self._unit_of_work() as repository:
+            repository.finish_run(
+                run_id,
                 found=report.found,
                 new=report.new,
                 updated=report.updated,
@@ -290,18 +315,114 @@ class IngestService:
                 errors=report.errors,
                 http_stats=report.http_stats,
             )
-            self.session.commit()
 
-        log.info(
-            "ingest_done",
-            found=report.found,
-            new=report.new,
-            updated=report.updated,
-            duplicates=report.duplicates,
-            failed=report.failed,
-            errors=len(report.source_errors),
-        )
+    def _abort_run(self, run_id: int, error: str) -> None:
+        with self._unit_of_work() as repository:
+            repository.abort_run(run_id, error=error)
+
+    async def run(
+        self,
+        query: SearchQuery,
+        *,
+        store: bool = True,
+        download_documents: bool = False,
+    ) -> IngestReport:
+        report = IngestReport(stored=store and self.persists)
+        if not self.sources:
+            log.warning("no_sources_enabled")
+            return report
+
+        run_id: int | None = None
+        if self.persists and store:
+            run_id = await asyncio.to_thread(self._begin_run, query)
+
+        # run_id auch ohne Speicherung binden: die Logzeilen eines Laufs
+        # bleiben so zusammen auswertbar (--no-store, doctor).
+        with bound_contextvars(run_id=run_id if run_id is not None else f"dry-{uuid4().hex[:8]}"):
+            try:
+                await self._collect(query, report, store=store, downloads=download_documents)
+            except Exception as exc:
+                # Ein abgebrochener Lauf wird als solcher protokolliert, statt
+                # bis zum naechsten Start als "laeuft" stehen zu bleiben.
+                if run_id is not None:
+                    await asyncio.to_thread(self._abort_run, run_id, f"{type(exc).__name__}: {exc}")
+                log.error("ingest_aborted", error=str(exc))
+                raise
+
+            if run_id is not None:
+                await asyncio.to_thread(self._finish_run, run_id, report)
+
+            log.info(
+                "ingest_done",
+                found=report.found,
+                new=report.new,
+                updated=report.updated,
+                duplicates=report.duplicates,
+                failed=report.failed,
+                errors=len(report.source_errors),
+            )
         return report
+
+    async def _collect(
+        self, query: SearchQuery, report: IngestReport, *, store: bool, downloads: bool
+    ) -> None:
+        """Quellen parallel abfragen, Treffer sequenziell nach Prioritaet speichern."""
+        results = await asyncio.gather(
+            *(self._search_one(source, query) for source in self.sources)
+        )
+
+        for source, outcome, duration in sorted(results, key=lambda item: item[0].priority):
+            with bound_contextvars(source=source.name):
+                if isinstance(outcome, Exception):
+                    source_report = SourceReport(
+                        name=source.name,
+                        type=source.type_name,
+                        ok=False,
+                        error=f"{type(outcome).__name__}: {outcome}",
+                        duration_seconds=duration,
+                    )
+                    if self.persists:
+                        await asyncio.to_thread(
+                            self._record_source_state,
+                            source.name,
+                            source.type_name,
+                            success=False,
+                            error=source_report.error,
+                        )
+                    report.sources.append(source_report)
+                    continue
+
+                tenders = outcome
+                report.tenders.extend(tenders)
+
+                if downloads:
+                    await self._download_documents(source, tenders)
+
+                if self.persists and store:
+                    persisted = await asyncio.to_thread(
+                        self._persist_source, source.name, source.type_name, tenders
+                    )
+                    source_report = persisted.report
+                    report.new_tender_ids.extend(persisted.new_ids)
+                    report.updated_tender_ids.extend(persisted.updated_ids)
+                    report.record_errors.extend(persisted.record_errors)
+                else:
+                    source_report = SourceReport(
+                        name=source.name, type=source.type_name, found=len(tenders)
+                    )
+                source_report.duration_seconds = duration
+
+                if self.persists:
+                    await asyncio.to_thread(
+                        self._record_source_state,
+                        source.name,
+                        source.type_name,
+                        success=True,
+                        result_count=len(tenders),
+                    )
+                report.sources.append(source_report)
+
+        report.http_stats = self.http.stats.as_dict()
 
     async def _download_documents(self, source: TenderSource, tenders: Sequence[Tender]) -> None:
         destination = Path(self.settings.documents_dir)

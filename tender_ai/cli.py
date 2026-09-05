@@ -601,15 +601,20 @@ def runs(
 
     table = Table(title="Rechercherlaeufe", header_style="bold")
     table.add_column("Start")
+    table.add_column("Status")
     table.add_column("Quellen")
     table.add_column("Gefunden", justify="right")
     table.add_column("Neu", justify="right")
     table.add_column("Aktualisiert", justify="right")
     table.add_column("Dubletten", justify="right")
     table.add_column("Fehler", justify="right")
+    #: Ein Lauf ohne Abschluss faellt so sofort auf.
+    run_status_style = {"finished": "green", "running": "yellow", "aborted": "red"}
     for run in run_records:
+        status = run.status or "running"
         table.add_row(
             _safe(run.started_at),
+            f"[{run_status_style.get(status, 'white')}]{escape(status)}[/]",
             ", ".join(run.sources or []),
             str(run.found),
             str(run.new),
@@ -1578,14 +1583,25 @@ def status(
 
 
 @app.command("cache-clear")
-def cache_clear(config: Path | None = typer.Option(None, "--config")) -> None:
+def cache_clear(
+    config: Path | None = typer.Option(None, "--config"),
+    expired: bool = typer.Option(
+        False, "--expired", help="Nur abgelaufene Eintraege loeschen statt des ganzen Caches."
+    ),
+) -> None:
     """HTTP-Cache leeren."""
     settings = _settings(config)
     from .core.cache import ResponseCache
 
-    cache = ResponseCache(settings.cache_dir, enabled=True)
-    removed = cache.clear()
-    console.print(f"{removed} zwischengespeicherte Antworten geloescht.")
+    cache = ResponseCache(
+        settings.cache_dir,
+        ttl_seconds=settings.http.cache_ttl_seconds,
+        enabled=True,
+        max_entries=settings.http.cache_max_entries,
+    )
+    removed = cache.evict_expired() if expired else cache.clear()
+    was = "abgelaufene" if expired else "zwischengespeicherte"
+    console.print(f"{removed} {was} Antworten geloescht.")
 
 
 def main() -> None:  # pragma: no cover - Einstiegspunkt

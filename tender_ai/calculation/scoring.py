@@ -41,6 +41,7 @@ def evaluate_criteria(
     *,
     criteria: CriteriaConfig,
     days_until_deadline: int | None,
+    minimum_days_until_deadline: int,
 ) -> list[CriterionResult]:
     """Mindestkriterien pruefen - fehlende Daten gelten nie als erfuellt."""
     results: list[CriterionResult] = []
@@ -106,14 +107,16 @@ def evaluate_criteria(
         None if risk is None else risk <= criteria.maximum_risk_score,
     )
 
+    # Die Restfrist kommt aus der Suchkonfiguration (search.min_days_until_deadline);
+    # derselbe Wert entscheidet, welche Ausschreibungen ueberhaupt recherchiert werden.
     add(
         "deadline",
         "Restfrist",
-        f">= {criteria.minimum_days_until_deadline} Tage",
+        f">= {minimum_days_until_deadline} Tage",
         days_until_deadline,
         None
         if days_until_deadline is None
-        else (days_until_deadline >= criteria.minimum_days_until_deadline),
+        else (days_until_deadline >= minimum_days_until_deadline),
         suffix=" Tage",
     )
     return results
