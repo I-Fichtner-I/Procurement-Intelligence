@@ -33,8 +33,13 @@ testbar, bevor die naechste beginnt.
 > Selbstkosten, daraus einen Angebotspreis, und bewertet das Ergebnis gegen die
 > Mindestkriterien. **Kein Angebot** - die Abgabe bleibt Handarbeit.
 >
-> Stufe 6 (Dashboard, Benachrichtigungen, Angebotsentwurf) folgt danach -
-> siehe [docs/architecture.md](docs/architecture.md).
+> **Stufe 6 ist fertig: Freigabe, Angebotsentwurf und Uebersicht.**
+> `tender-ai decide <id> --approve` haelt die Entscheidung eines Menschen fest,
+> `tender-ai offer <id>` erzeugt daraufhin einen **Entwurf** (Markdown und
+> XLSX), `tender-ai status` zeigt, wo jede Ausschreibung steht.
+>
+> Damit ist die Kette aus dem Auftrag geschlossen - **die Abgabe bleibt
+> Handarbeit.**
 
 ---
 
@@ -231,7 +236,61 @@ sonst saehe eine Datenluecke aus wie ein Erfolg.
 > manuelle Pruefung → manuelle Abgabe. Auch die JSON-Ausgabe traegt
 > `is_binding_offer: false` und `requires_user_approval: true`.
 
-### 8. Echte Recherche
+### 8. Freigeben und Entwurf erzeugen (Stufe 6)
+
+```bash
+tender-ai status                                   # wo steht was?
+tender-ai decide ted:00123456-2026                 # Stand ansehen
+tender-ai decide ted:00123456-2026 --approve --note "Preise bestaetigt"
+tender-ai offer  ted:00123456-2026 --out entwuerfe # ENTWURF erzeugen
+```
+
+```
+ Frist  Titel                              Unt. Ana. Pos. Preis Kalk.  Entscheidung   Naechster Schritt
+  42 T  Lieferung von Bildschirmarbeits...   x    x    x    x     x    FREIGEGEBEN    offer
+  17 T  Wartung von Aufzugsanlagen           x    x    x    .     .    offen          prices
+```
+
+**Ohne Freigabe kein Entwurf.** `offer` verweigert die Arbeit, solange kein
+Mensch entschieden hat - auch nicht "nur zur Ansicht". Ein Dokument, das
+aussieht wie ein Angebot, soll ohne Entscheidung gar nicht erst entstehen.
+
+**Die Freigabe gilt Zahlen, nicht einer Ausschreibung.** Sie haelt fest, welche
+Kalkulation freigegeben wurde. Aendert sich danach etwas an Preisen, Positionen
+oder Zuschlaegen, ist die Freigabe **veraltet** und muss erneuert werden - sonst
+traegt eine alte Zustimmung eine neue Rechnung. Ein erneuter Lauf mit
+unveraenderten Zahlen entwertet dagegen nichts.
+
+**Ueberstimmen ist erlaubt, aber sichtbar.** Wer gegen ein `NICHT BEWERTBAR`
+oder ein verletztes Mindestkriterium freigibt, bekommt es gesagt:
+
+```
+Achtung Freigabe trotz nicht bewertbarer Datenlage (Abdeckung 40 Prozent) -
+        die Zahlen beruhen auf 2 von 5 Positionen.
+```
+
+Der Entwurf traegt seinen Zustand an jeder Stelle - Kopfzeile, Fusszeile,
+Blattname - und laesst offen, was das Tool nicht wissen kann:
+
+```markdown
+# ENTWURF - NICHT ZUR ABGABE
+
+- **Bieter: Firma, Anschrift, Ansprechpartner:** <<BITTE AUSFUELLEN>>
+- **Ort, Datum, rechtsverbindliche Unterschrift:** <<BITTE AUSFUELLEN>>
+
+| Pos. | Bezeichnung                        | Menge | Einzelpreis        | Herkunft            |
+| 1.10 | Monitor 27 Zoll, Fabrikat: Muster  | 120.0 | 255,15 EUR         | Einkauf …, Guete 90 |
+| 1.30 | Schreibtisch … **(von Hand)**      |  60.0 | <<BITTE AUSFUELLEN>> | Guete 45 unter 85 |
+```
+
+Positionen ohne belastbaren Preis werden **nicht weggelassen**, sondern als
+Zeilen mit Handarbeitskennzeichen gefuehrt - eine stillschweigend fehlende
+Position waere im abgegebenen Angebot ein fehlender Posten.
+
+> **Das Tool reicht nichts ein.** Es versendet nichts, bestaetigt nichts und
+> unterschreibt nichts. Die Abgabe erfolgt von Hand ueber das Vergabeportal.
+
+### 9. Echte Recherche
 
 ```bash
 # EU-weit (TED) nach Monitoren, veroeffentlicht in den letzten 14 Tagen
@@ -268,6 +327,9 @@ tender-ai runs                              # Laufprotokoll + Quellenstatus
 | `tender-ai prices --all [-n N]` | Preise aller laufenden Ausschreibungen recherchieren |
 | `tender-ai calculate <id> [--positions]` | Kosten, Marge, Entscheidungsvorlage (Stufe 5) |
 | `tender-ai calculate --all [-n N]` | priorisierte Vorlage ueber alle Ausschreibungen |
+| `tender-ai status [--all]` | Pipeline-Uebersicht mit naechstem Schritt (Stufe 6) |
+| `tender-ai decide <id> [--approve\|--reject\|--hold]` | Freigabe entscheiden und protokollieren |
+| `tender-ai offer <id> [--out DIR]` | Angebotsentwurf erzeugen (nur nach Freigabe) |
 | `tender-ai export <datei>` | JSON / CSV / XLSX |
 | `tender-ai runs` | letzte Laeufe und Quellenstatus |
 | `tender-ai cache-clear` | HTTP-Cache leeren |
@@ -476,6 +538,7 @@ tender_ai/
 ├── items/                 Artikelerkennung: Spaltenrollen, Einheiten, Positionen
 ├── pricing/               Produkt-Matching, Preisstatistik, Preisquellen
 ├── calculation/           Kosten, Szenarien, Mindestkriterien, Urteil
+├── offer/                 Angebotsentwurf (Markdown, XLSX) - nie eine Abgabe
 ├── pipeline/              ingest.py (Lauforchestrierung), dedup.py
 ├── database/              SQLAlchemy-Modelle, Session, Repository, Alembic-Migrationen
 └── export/                JSON / CSV / XLSX
@@ -483,8 +546,8 @@ tests/                     Offline-Tests (respx-Mocks)
 config.yaml  .env.example  docs/architecture.md
 ```
 
-Naechste Stufe: **Dashboard und Angebotsentwurf** - Ueberblick, Freigabe durch
-den Nutzer und daraus ein Angebotsentwurf zur manuellen Pruefung.
+Die Kette aus dem Auftrag ist damit geschlossen: Recherche, Analyse,
+Artikelextraktion, Preisrecherche, Kalkulation, Freigabe, Angebotsentwurf.
 Details in [docs/architecture.md](docs/architecture.md).
 
 ## Review und Roadmap

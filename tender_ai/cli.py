@@ -36,16 +36,21 @@ from .database.repository import TenderRepository
 from .database.session import session_scope
 from .export.exporters import EXPORT_FORMATS, export_tenders
 from .models.common import display as _display
+from .models.decision import DecisionKind
 from .models.tender import Tender
 from .services import (
     analyze_open_tenders,
     analyze_tender,
+    approval_state,
     calculate_open_tenders,
     calculate_tender,
     check_sources,
+    create_offer_draft,
     extract_items_for_open_tenders,
     extract_tender_items,
     fetch_documents,
+    pipeline_status,
+    record_decision,
     research_and_store,
     research_open_tenders,
     run_search,
@@ -1361,6 +1366,215 @@ def calculate(
                 border_style="yellow",
             )
         )
+
+
+DECISION_COLOURS = {
+    "APPROVED": "green",
+    "REJECTED": "red",
+    "ON_HOLD": "yellow",
+    "PENDING": "dim",
+}
+DECISION_LABELS = {
+    "APPROVED": "FREIGEGEBEN",
+    "REJECTED": "VERWORFEN",
+    "ON_HOLD": "ZURUECKGESTELLT",
+    "PENDING": "offen",
+}
+
+
+def _decision_cell(kind: str, *, stale: bool = False) -> str:
+    colour = DECISION_COLOURS.get(kind, "white")
+    label = DECISION_LABELS.get(kind, kind)
+    if stale:
+        return f"[yellow]{escape(label)} (veraltet)[/yellow]"
+    return f"[{colour}]{escape(label)}[/{colour}]"
+
+
+@app.command()
+def decide(
+    tender_id: str = typer.Argument(..., help="Tender-ID oder Quell-ID"),
+    config: Path | None = typer.Option(None, "--config"),
+    approve: bool = typer.Option(False, "--approve", help="zur Angebotserstellung freigeben"),
+    reject: bool = typer.Option(False, "--reject", help="verwerfen"),
+    hold: bool = typer.Option(False, "--hold", help="zurueckstellen"),
+    by: str | None = typer.Option(None, "--by", help="wer entscheidet (Default: Systembenutzer)"),
+    note: str | None = typer.Option(None, "--note", help="Begruendung fuer das Protokoll"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Freigabe erteilen, verweigern oder zurueckstellen (Stufe 6).
+
+    Ohne Option zeigt der Befehl nur den aktuellen Stand an.
+    """
+    settings = _settings(config)
+    chosen = [flag for flag in (approve, reject, hold) if flag]
+    if len(chosen) > 1:
+        console.print("[red]Bitte genau eine Entscheidung angeben.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        if not chosen:
+            state = approval_state(settings, tender_id)
+            if json_output:
+                console.print_json(jsonlib.dumps(state.as_dict(), ensure_ascii=False, default=str))
+                return
+            console.print(f"Stand: {_decision_cell(str(state.kind), stale=state.is_stale)}")
+            if state.decision:
+                decision = state.decision
+                console.print(
+                    f"Zuletzt: {_safe(decision.decided_by)} am "
+                    f"{_safe(decision.decided_at)}"
+                    + (f" - {_safe(decision.note)}" if decision.note else "")
+                )
+            for blocker in state.blockers:
+                console.print(f"[yellow]Offen[/yellow] {_safe(blocker)}")
+            return
+
+        import getpass
+
+        kind = (
+            DecisionKind.APPROVED
+            if approve
+            else (DecisionKind.REJECTED if reject else DecisionKind.ON_HOLD)
+        )
+        decided_by = by or getpass.getuser()
+        decision = record_decision(settings, tender_id, kind, decided_by=decided_by, note=note)
+    except ConfigError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        console.print_json(jsonlib.dumps(decision.as_dict(), ensure_ascii=False, default=str))
+        return
+
+    console.print(
+        Panel.fit(
+            f"{_decision_cell(str(decision.kind))} durch {_safe(decision.decided_by)}\n"
+            f"Grundlage: Urteil {_safe(decision.verdict_at_decision)}"
+            + (
+                f", Marge {decision.margin_percent_at_decision:.1f} %"
+                if decision.margin_percent_at_decision is not None
+                else ""
+            )
+            + (f"\nNotiz: {_safe(decision.note)}" if decision.note else ""),
+            title=f"Entscheidung {escape(decision.tender_id)}",
+        )
+    )
+    if decision.override_warning:
+        console.print(f"[yellow]Achtung[/yellow] {_safe(decision.override_warning)}")
+    if decision.kind is DecisionKind.APPROVED:
+        console.print(
+            f"[dim]Naechster Schritt: tender-ai offer {escape(decision.tender_id)} - "
+            f"erzeugt einen Entwurf zur Pruefung von Hand.[/dim]"
+        )
+
+
+@app.command()
+def offer(
+    tender_id: str = typer.Argument(..., help="Tender-ID oder Quell-ID"),
+    config: Path | None = typer.Option(None, "--config"),
+    out: Path | None = typer.Option(None, "--out", "-o", help="Zielverzeichnis"),
+    fmt: list[str] | None = typer.Option(
+        None, "--format", "-f", help="md und/oder xlsx (Default: beide)"
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Angebotsentwurf erzeugen - nur nach Freigabe (Stufe 6).
+
+    Das Ergebnis ist ein ENTWURF zur Pruefung von Hand. Es wird nichts
+    eingereicht, versendet oder bestaetigt.
+    """
+    settings = _settings(config)
+    formats = tuple(fmt) if fmt else ("md", "xlsx")
+    unknown = set(formats) - {"md", "xlsx"}
+    if unknown:
+        console.print(f"[red]Unbekanntes Format: {escape(', '.join(sorted(unknown)))}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        result = create_offer_draft(settings, tender_id, destination=out, formats=formats)
+    except ConfigError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        console.print_json(jsonlib.dumps(result.as_dict(), ensure_ascii=False, default=str))
+        return
+
+    draft = result.draft
+    console.print(
+        Panel.fit(
+            f"[bold red]ENTWURF - NICHT ZUR ABGABE[/bold red]\n"
+            f"{len(draft.positions)} Position(en), davon "
+            f"{draft.manual_position_count} von Hand zu ergaenzen\n"
+            f"Nettosumme der bepreisten Positionen: "
+            f"{_money(draft.net_total, draft.currency)}",
+            title=f"Angebotsentwurf {escape(draft.tender_id)}",
+            border_style="red",
+        )
+    )
+    for path in result.files:
+        console.print(f"Geschrieben: {escape(str(path))}")
+    if draft.review_notes:
+        console.print(
+            Panel(
+                "\n".join(f"- {_safe(note)}" for note in draft.review_notes),
+                title="Vor der Abgabe pruefen",
+                border_style="yellow",
+            )
+        )
+    console.print(
+        "[dim]Der Entwurf wurde nicht eingereicht. Abgabe erfolgt von Hand ueber "
+        "das Vergabeportal.[/dim]"
+    )
+
+
+@app.command()
+def status(
+    config: Path | None = typer.Option(None, "--config"),
+    limit: int = typer.Option(50, "--limit", "-n"),
+    all_tenders: bool = typer.Option(
+        False, "--all", help="auch abgelaufene Ausschreibungen zeigen"
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Wo steht welche Ausschreibung - und was waere der naechste Schritt?"""
+    settings = _settings(config)
+    rows = pipeline_status(settings, limit=limit, open_only=not all_tenders)
+
+    if json_output:
+        console.print_json(
+            jsonlib.dumps([row.as_dict() for row in rows], ensure_ascii=False, default=str)
+        )
+        return
+
+    if not rows:
+        console.print("[dim]Keine Ausschreibungen gespeichert.[/dim]")
+        return
+
+    table = Table(title=f"Pipeline ({len(rows)})", header_style="bold")
+    table.add_column("Frist", justify="right")
+    table.add_column("Titel", overflow="fold")
+    table.add_column("Unt.", justify="center")
+    table.add_column("Ana.", justify="center")
+    table.add_column("Pos.", justify="center")
+    table.add_column("Preis", justify="center")
+    table.add_column("Kalk.", justify="center")
+    table.add_column("Entscheidung")
+    table.add_column("Naechster Schritt")
+    for row in rows:
+        marks = [
+            "[green]x[/green]" if row.stages[stage] else "[dim].[/dim]"
+            for stage in ("unterlagen", "analysiert", "positionen", "preise", "kalkuliert")
+        ]
+        table.add_row(
+            f"{row.deadline_days} T" if row.deadline_days is not None else "[dim]?[/dim]",
+            _safe(row.title),
+            *marks,
+            _decision_cell(row.decision, stale=row.is_stale),
+            escape(row.next_step),
+        )
+    console.print(table)
+    console.print("[dim]x = erledigt. Die Kette endet immer bei einer Entscheidung von Hand.[/dim]")
 
 
 @app.command("cache-clear")
