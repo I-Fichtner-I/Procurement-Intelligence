@@ -576,4 +576,6 @@ Details in [docs/architecture.md](docs/architecture.md).
   zwischen Dokumentation und Code)
 - [docs/OPTIMIZATION_ROADMAP.md](docs/OPTIMIZATION_ROADMAP.md) - priorisierte,
   direkt umsetzbare Tasks mit Akzeptanzkriterien und empfohlener Reihenfolge;
-  Wellen 0-3 sind das Gate vor Beginn von Stufe 2
+  Wellen 0-3 waren das Gate vor Beginn von Stufe 2. **Alle Wellen (0-5) sind
+  umgesetzt**; der Umsetzungsstand am Anfang des Dokuments nennt zu jedem Task
+  den Test, der ihn belegt.

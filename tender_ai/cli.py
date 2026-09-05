@@ -385,8 +385,10 @@ def list_tenders(
             search=search_text,
             open_only=open_only,
             order_by=order_by,
+            # Rohdaten nur, wenn sie auch ausgegeben werden (--json).
+            include_raw=json_output,
         )
-        tenders = [TenderRepository.to_tender(record) for record in records]
+        tenders = [TenderRepository.to_tender(record, with_raw=json_output) for record in records]
         risks = {
             record.id: (record.risk_analysis.score, record.risk_analysis.level)
             for record in records
@@ -599,7 +601,9 @@ def export(
     fmt = (export_format or output.suffix.lstrip(".") or "json").lower()
     with session_scope(settings.database_url) as session:
         repository = TenderRepository(session, settings.dedup)
-        records = repository.list_tenders(limit=limit, sources=source, open_only=open_only)
+        records = repository.list_tenders(
+            limit=limit, sources=source, open_only=open_only, include_raw=True
+        )
         tenders = [TenderRepository.to_tender(record) for record in records]
     path = export_tenders(tenders, output, fmt)
     console.print(

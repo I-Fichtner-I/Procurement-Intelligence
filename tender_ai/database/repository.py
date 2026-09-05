@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ..config import DedupConfig
 from ..models.analysis import AnalysisResult
@@ -43,6 +43,7 @@ from .models import (
     TenderChangeRecord,
     TenderDocumentRecord,
     TenderItemRecord,
+    TenderRawRecord,
     TenderRecord,
 )
 
@@ -70,6 +71,17 @@ class UpsertResult:
 
 def _json_ready(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
+
+
+def _payload_without_raw(tender: Tender) -> dict[str, Any]:
+    """Tender als JSON - ohne ``raw``.
+
+    Die Rohdaten stehen in ``tender_raw`` (T-27); im ``payload`` waeren sie ein
+    zweites Mal gespeichert und wuerden jede Listenabfrage verteuern.
+    """
+    payload = _json_ready(tender.model_dump(mode="json"))
+    payload.pop("raw", None)
+    return payload
 
 
 def _as_text(value: Any) -> str | None:
@@ -138,7 +150,7 @@ class TenderRepository:
             submission_deadline=tender.submission_deadline,
             estimated_value=tender.estimated_value,
             currency=tender.currency,
-            payload=_json_ready(tender.model_dump(mode="json")),
+            payload=_payload_without_raw(tender),
             content_hash=tender.content_hash(),
             is_primary=True,
             first_seen_at=utcnow(),
@@ -156,7 +168,21 @@ class TenderRepository:
             )
             for doc in tender.documents
         ]
+        if tender.raw:
+            record.raw_record = TenderRawRecord(raw=_json_ready(tender.raw))
         return record
+
+    @staticmethod
+    def _store_raw(record: TenderRecord, tender: Tender) -> None:
+        """Rohdaten der Quelle neben dem Datensatz halten (T-27)."""
+        if not tender.raw:
+            # Kein Rohsatz mehr: den alten stehen zu lassen waere irrefuehrend.
+            record.raw_record = None
+            return
+        if record.raw_record is None:
+            record.raw_record = TenderRawRecord(raw=_json_ready(tender.raw))
+        else:
+            record.raw_record.raw = _json_ready(tender.raw)
 
     def _update_existing(self, record: TenderRecord, tender: Tender) -> UpsertResult:
         record.last_seen_at = utcnow()
@@ -203,7 +229,8 @@ class TenderRepository:
         record.source_url = tender.source_url
         record.national_id = tender.national_id or record.national_id
         record.fingerprint = tender.fingerprint()
-        record.payload = _json_ready(tender.model_dump(mode="json"))
+        record.payload = _payload_without_raw(tender)
+        self._store_raw(record, tender)
         record.content_hash = new_hash
 
         if old_doc_urls != new_doc_urls:
@@ -297,8 +324,18 @@ class TenderRepository:
         open_only: bool = False,
         min_days_until_deadline: int | None = None,
         order_by: str = "deadline",
+        include_raw: bool = False,
     ) -> list[TenderRecord]:
+        """Ausschreibungen filtern und sortiert zurueckgeben.
+
+        ``include_raw`` laedt die Rohdaten (Tabelle ``tender_raw``) in einer
+        zusaetzlichen Abfrage mit - noetig fuer Ausgaben, die sie enthalten
+        (JSON-Liste, Export). Ohne die Option bleiben sie ungelesen, statt je
+        Datensatz einzeln nachgeladen zu werden.
+        """
         stmt = select(TenderRecord)
+        if include_raw:
+            stmt = stmt.options(selectinload(TenderRecord.raw_record))
         if only_primary:
             stmt = stmt.where(TenderRecord.is_primary.is_(True))
         if sources:
@@ -703,7 +740,8 @@ class TenderRepository:
 
     def save_requirements(self, record: TenderRecord, tender: Tender) -> None:
         """Erkannte Anforderungen im Tender-Payload festhalten."""
-        record.payload = _json_ready(tender.model_dump(mode="json"))
+        record.payload = _payload_without_raw(tender)
+        self._store_raw(record, tender)
         self.session.flush()
 
     def changes_for(self, tender_id: str, limit: int = 50) -> list[TenderChangeRecord]:
@@ -725,9 +763,17 @@ class TenderRepository:
         )
 
     @staticmethod
-    def to_tender(record: TenderRecord) -> Tender:
-        """DB-Datensatz zurueck in das Pydantic-Modell wandeln."""
+    def to_tender(record: TenderRecord, *, with_raw: bool = True) -> Tender:
+        """DB-Datensatz zurueck in das Pydantic-Modell wandeln.
+
+        ``with_raw=False`` laesst die Rohdaten weg und spart damit die
+        Nachladeabfrage auf ``tender_raw`` - sinnvoll fuer Listen und Exporte,
+        die die Rohantwort ohnehin nicht anzeigen.
+        """
         payload = dict(record.payload or {})
+        if with_raw and payload:
+            raw_record = record.raw_record
+            payload["raw"] = dict(raw_record.raw) if raw_record is not None else {}
         if not payload:
             payload = {
                 "id": record.id,

@@ -198,3 +198,52 @@ def test_changes_for_returns_only_that_tender(repository: TenderRepository):
     assert changes_b and all(c.tender_id == "feed:2" for c in changes_b)
     assert any(c.field == "title" for c in changes_b)
     assert len(repository.changes_for("ted:1", limit=10)) == 10
+
+
+# --- T-27: Rohdaten liegen neben dem Datensatz, nicht im payload ---------------
+def test_raw_is_stored_beside_the_payload(repository: TenderRepository):
+    repository.upsert(tender(raw={"notice": {"publication-number": "00123456-2026"}}))
+    record = repository.get("ted:1")
+
+    assert "raw" not in record.payload
+    assert record.raw_record is not None
+    assert record.raw_record.raw == {"notice": {"publication-number": "00123456-2026"}}
+
+    # Round-Trip: das Modell bekommt seine Rohdaten wieder.
+    restored = TenderRepository.to_tender(record)
+    assert restored.raw == {"notice": {"publication-number": "00123456-2026"}}
+    # ... und ohne sie, wenn der Aufrufer sie nicht braucht.
+    assert TenderRepository.to_tender(record, with_raw=False).raw == {}
+
+
+def test_raw_follows_the_update(repository: TenderRepository):
+    repository.upsert(tender(raw={"stand": "alt"}))
+    repository.upsert(tender(raw={"stand": "neu"}, title="Lieferung von 3.000 Monitoren"))
+    record = repository.get("ted:1")
+    assert record.raw_record.raw == {"stand": "neu"}
+
+    # Liefert die Quelle keine Rohdaten mehr, bleibt kein veralteter Satz stehen.
+    repository.upsert(tender(raw={}, title="Lieferung von 4.000 Monitoren"))
+    repository.session.flush()
+    assert repository.get("ted:1").raw_record is None
+
+
+def test_raw_is_deleted_with_its_tender(repository: TenderRepository):
+    repository.upsert(tender(raw={"gross": "x" * 100}))
+    record = repository.get("ted:1")
+    repository.session.delete(record)
+    repository.session.flush()
+
+    from tender_ai.database.models import TenderRawRecord
+
+    assert repository.session.get(TenderRawRecord, "ted:1") is None
+
+
+def test_list_can_load_raw_without_extra_queries_per_record(repository: TenderRepository):
+    for index in range(3):
+        repository.upsert(tender(id=f"ted:{index}", source_id=str(index), raw={"index": index}))
+    repository.session.commit()
+    repository.session.expunge_all()
+
+    records = repository.list_tenders(include_raw=True)
+    assert {record.raw_record.raw["index"] for record in records} == {0, 1, 2}
