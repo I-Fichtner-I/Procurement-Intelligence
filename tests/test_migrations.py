@@ -122,3 +122,71 @@ def test_blocking_key_backfill(tmp_path: Path):
     with engine.connect() as connection:
         key = connection.execute(text("SELECT blocking_key FROM tenders WHERE id='a:1'")).scalar()
     assert key == "musterstadt zentrale ver|lieferung von 2000"
+
+
+def test_run_status_backfill(tmp_path: Path):
+    """0009 setzt fuer Bestandslaeufe einen plausiblen Status."""
+    from alembic import command
+
+    from tender_ai.database.migrations import alembic_config
+
+    url = _url(tmp_path, "runstatus.db")
+    config = alembic_config(url)
+    command.upgrade(config, "0008_decisions")
+
+    engine = get_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO ingest_runs (id, started_at, finished_at, sources, query, found, "
+                "new, updated, duplicates, errors, http_stats) VALUES "
+                "(1, '2026-01-01', '2026-01-01', '[]', '{}', 0, 0, 0, 0, '[]', '{}'), "
+                "(2, '2026-01-02', NULL, '[]', '{}', 0, 0, 0, 0, '[]', '{}')"
+            )
+        )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        rows = dict(connection.execute(text("SELECT id, status FROM ingest_runs")).all())
+    assert rows == {1: "finished", 2: "aborted"}
+
+
+def test_raw_is_moved_out_of_the_payload(tmp_path: Path):
+    """0010 zieht vorhandene Rohdaten nach tender_raw um - ohne Datenverlust."""
+    import json
+
+    from alembic import command
+
+    from tender_ai.database.migrations import alembic_config
+
+    url = _url(tmp_path, "raw.db")
+    config = alembic_config(url)
+    command.upgrade(config, "0009_run_status")
+
+    payload = {"id": "a:1", "source": "a", "source_id": "1", "raw": {"notice": "gross"}}
+    engine = get_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO tenders (id, fingerprint, source, source_id, content_hash, "
+                "cpv_codes, payload, status, is_primary, first_seen_at, last_seen_at, "
+                "updated_at) VALUES ('a:1', 'f', 'a', '1', 'h', '[]', :payload, 'OPEN', 1, "
+                "'2026-01-01', '2026-01-01', '2026-01-01')"
+            ),
+            {"payload": json.dumps(payload)},
+        )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        stored = connection.execute(text("SELECT payload FROM tenders WHERE id = 'a:1'")).scalar()
+        raw = connection.execute(
+            text("SELECT raw FROM tender_raw WHERE tender_id = 'a:1'")
+        ).scalar()
+    assert "raw" not in json.loads(stored)
+    assert json.loads(raw) == {"notice": "gross"}
+
+    # Rueckwaerts: die Rohdaten landen wieder im payload.
+    command.downgrade(config, "0009_run_status")
+    with engine.connect() as connection:
+        stored = connection.execute(text("SELECT payload FROM tenders WHERE id = 'a:1'")).scalar()
+    assert json.loads(stored)["raw"] == {"notice": "gross"}

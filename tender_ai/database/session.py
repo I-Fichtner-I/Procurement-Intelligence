@@ -7,7 +7,7 @@ mehr bei jedem Session-Start aufgerufen.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -65,6 +65,21 @@ def create_all(database_url: str) -> Engine:
     engine = get_engine(database_url)
     Base.metadata.create_all(engine)
     return engine
+
+
+def session_factory(database_url: str, *, ensure_schema: bool = True) -> Callable[[], Session]:
+    """Fabrik fuer Sessions - fuer Aufrufer, die selbst mehrere Sessions oeffnen.
+
+    Das Schema wird einmal geprueft (nicht bei jeder Session), damit die
+    Fabrik in einem Worker-Thread ohne Migrationslauf verwendet werden kann.
+    """
+    engine = get_engine(database_url)
+    if ensure_schema:
+        from .migrations import ensure_current_schema
+
+        ensure_current_schema(database_url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    return factory
 
 
 @contextmanager

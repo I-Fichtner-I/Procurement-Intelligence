@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import httpx
@@ -194,6 +196,28 @@ def test_export_xlsx_and_cache_clear(settings: Settings, tmp_path: Path):
     result = runner.invoke(app, _args(settings, "cache-clear"))
     assert result.exit_code == 0
     assert "geloescht" in result.output
+
+
+def test_cache_clear_expired_only_removes_stale_entries(settings: Settings):
+    """T-17: --expired laesst frische Antworten stehen und meldet die Anzahl."""
+    from tender_ai.core.cache import ResponseCache
+
+    fresh_cache = ResponseCache(settings.cache_dir, ttl_seconds=3600)
+    fresh = ResponseCache.make_key("GET", "https://x.invalid/frisch")
+    fresh_cache.set(fresh, status_code=200, content=b"frisch")
+
+    stale = ResponseCache.make_key("GET", "https://x.invalid/alt")
+    fresh_cache.set(stale, status_code=200, content=b"alt")
+    # Eintrag kuenstlich altern lassen (aelter als http.cache_ttl_seconds).
+    stale_path = settings.cache_dir / f"{stale}.json"
+    aged = time.time() - settings.http.cache_ttl_seconds - 60
+    os.utime(stale_path, (aged, aged))
+
+    result = runner.invoke(app, _args(settings, "cache-clear", "--expired"))
+    assert result.exit_code == 0, result.output
+    assert "1 abgelaufene" in result.output
+    assert not stale_path.exists()
+    assert fresh_cache.get(fresh) is not None
 
 
 def test_list_orders_and_filters(settings: Settings):

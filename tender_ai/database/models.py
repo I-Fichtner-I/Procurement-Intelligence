@@ -87,6 +87,11 @@ class TenderRecord(Base):
     #: Nutzerentscheidung (Human-in-the-loop, ab Stufe 5)
     user_decision: Mapped[str | None] = mapped_column(String(32), default=None)
 
+    #: Rohdaten der Quelle - eigene Tabelle, damit Listenabfragen sie nicht
+    #: mitlesen muessen (sie werden nur beim Zugriff nachgeladen).
+    raw_record: Mapped[TenderRawRecord | None] = relationship(
+        back_populates="tender", cascade="all, delete-orphan", uselist=False
+    )
     aliases: Mapped[list[TenderAliasRecord]] = relationship(
         back_populates="tender", cascade="all, delete-orphan"
     )
@@ -116,6 +121,26 @@ class TenderRecord(Base):
     )
 
     __table_args__ = (Index("ix_tenders_source_source_id", "source", "source_id", unique=True),)
+
+
+class TenderRawRecord(Base):
+    """Rohantwort der Quelle zu einer Ausschreibung.
+
+    Warum getrennt: ``tenders.payload`` wird bei jeder Liste, jedem Export und
+    jeder Dublettenpruefung mitgelesen. Die Rohdaten sind der mit Abstand
+    groesste Teil davon (eine TED-Bekanntmachung bringt ein Vielfaches der
+    normalisierten Felder mit) und werden fast nie gebraucht - hier liegen sie
+    beieinander und werden nur bei Bedarf geladen.
+    """
+
+    __tablename__ = "tender_raw"
+
+    tender_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("tenders.id", ondelete="CASCADE"), primary_key=True
+    )
+    raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    tender: Mapped[TenderRecord] = relationship(back_populates="raw_record")
 
 
 class TenderAliasRecord(Base):
@@ -470,6 +495,12 @@ class DecisionRecord(Base):
     tender: Mapped[TenderRecord] = relationship(back_populates="decisions")
 
 
+#: Zustaende eines Rechercherlaufs.
+RUN_RUNNING = "running"
+RUN_FINISHED = "finished"
+RUN_ABORTED = "aborted"
+
+
 class IngestRunRecord(Base):
     """Protokoll eines Rechercherlaufs - fuer Nachvollziehbarkeit und Scheduler."""
 
@@ -478,6 +509,9 @@ class IngestRunRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    #: running -> finished | aborted. Ein abgebrochener Lauf (Absturz, Kill)
+    #: bleibt sonst fuer immer als "laeuft" stehen und verfaelscht das Protokoll.
+    status: Mapped[str] = mapped_column(String(16), default=RUN_RUNNING, server_default=RUN_RUNNING)
     sources: Mapped[list[str]] = mapped_column(JSON, default=list)
     query: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     found: Mapped[int] = mapped_column(Integer, default=0)

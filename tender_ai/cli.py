@@ -28,6 +28,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
+from . import __version__
 from .config import Settings, load_settings
 from .core.errors import ConfigError
 from .core.logging import configure_logging, get_logger
@@ -65,6 +66,25 @@ app = typer.Typer(
 )
 console = Console()
 log = get_logger(__name__)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"tender-ai {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Version anzeigen und beenden.",
+    ),
+) -> None:
+    """Gemeinsame Optionen aller Befehle."""
 
 
 # --- Hilfsfunktionen ---------------------------------------------------------
@@ -365,8 +385,10 @@ def list_tenders(
             search=search_text,
             open_only=open_only,
             order_by=order_by,
+            # Rohdaten nur, wenn sie auch ausgegeben werden (--json).
+            include_raw=json_output,
         )
-        tenders = [TenderRepository.to_tender(record) for record in records]
+        tenders = [TenderRepository.to_tender(record, with_raw=json_output) for record in records]
         risks = {
             record.id: (record.risk_analysis.score, record.risk_analysis.level)
             for record in records
@@ -579,7 +601,9 @@ def export(
     fmt = (export_format or output.suffix.lstrip(".") or "json").lower()
     with session_scope(settings.database_url) as session:
         repository = TenderRepository(session, settings.dedup)
-        records = repository.list_tenders(limit=limit, sources=source, open_only=open_only)
+        records = repository.list_tenders(
+            limit=limit, sources=source, open_only=open_only, include_raw=True
+        )
         tenders = [TenderRepository.to_tender(record) for record in records]
     path = export_tenders(tenders, output, fmt)
     console.print(
@@ -601,15 +625,20 @@ def runs(
 
     table = Table(title="Rechercherlaeufe", header_style="bold")
     table.add_column("Start")
+    table.add_column("Status")
     table.add_column("Quellen")
     table.add_column("Gefunden", justify="right")
     table.add_column("Neu", justify="right")
     table.add_column("Aktualisiert", justify="right")
     table.add_column("Dubletten", justify="right")
     table.add_column("Fehler", justify="right")
+    #: Ein Lauf ohne Abschluss faellt so sofort auf.
+    run_status_style = {"finished": "green", "running": "yellow", "aborted": "red"}
     for run in run_records:
+        status = run.status or "running"
         table.add_row(
             _safe(run.started_at),
+            f"[{run_status_style.get(status, 'white')}]{escape(status)}[/]",
             ", ".join(run.sources or []),
             str(run.found),
             str(run.new),
@@ -1578,14 +1607,25 @@ def status(
 
 
 @app.command("cache-clear")
-def cache_clear(config: Path | None = typer.Option(None, "--config")) -> None:
+def cache_clear(
+    config: Path | None = typer.Option(None, "--config"),
+    expired: bool = typer.Option(
+        False, "--expired", help="Nur abgelaufene Eintraege loeschen statt des ganzen Caches."
+    ),
+) -> None:
     """HTTP-Cache leeren."""
     settings = _settings(config)
     from .core.cache import ResponseCache
 
-    cache = ResponseCache(settings.cache_dir, enabled=True)
-    removed = cache.clear()
-    console.print(f"{removed} zwischengespeicherte Antworten geloescht.")
+    cache = ResponseCache(
+        settings.cache_dir,
+        ttl_seconds=settings.http.cache_ttl_seconds,
+        enabled=True,
+        max_entries=settings.http.cache_max_entries,
+    )
+    removed = cache.evict_expired() if expired else cache.clear()
+    was = "abgelaufene" if expired else "zwischengespeicherte"
+    console.print(f"{removed} {was} Antworten geloescht.")
 
 
 def main() -> None:  # pragma: no cover - Einstiegspunkt

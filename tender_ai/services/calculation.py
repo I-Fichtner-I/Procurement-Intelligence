@@ -185,6 +185,7 @@ def calculate_tender(settings: Settings, tender_id: str) -> TenderCalculation:
             calculation.expected,
             criteria=settings.criteria,
             days_until_deadline=tender.days_until_deadline,
+            minimum_days_until_deadline=settings.search.min_days_until_deadline,
         )
         calculation.score, calculation.verdict = score_calculation(
             calculation,

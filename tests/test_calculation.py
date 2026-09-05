@@ -199,7 +199,11 @@ def test_criteria_are_checked_against_the_expected_case():
         ScenarioKind.EXPECTED, [_pricing()], config=CONFIG, minimum_confidence=85, currency="EUR"
     )
     results = evaluate_criteria(
-        calculation, scenario, criteria=CriteriaConfig(), days_until_deadline=30
+        calculation,
+        scenario,
+        criteria=CriteriaConfig(),
+        days_until_deadline=30,
+        minimum_days_until_deadline=3,
     )
     by_code = {result.code: result for result in results}
     assert by_code["margin"].passed  # 20 % >= 15 %
@@ -216,7 +220,11 @@ def test_criteria_are_checked_against_the_expected_case():
 def test_missing_data_never_counts_as_passed():
     """Eine Datenluecke darf nicht aussehen wie ein erfuelltes Kriterium."""
     results = evaluate_criteria(
-        _calculation(), None, criteria=CriteriaConfig(), days_until_deadline=None
+        _calculation(),
+        None,
+        criteria=CriteriaConfig(),
+        days_until_deadline=None,
+        minimum_days_until_deadline=3,
     )
     assert all(not result.passed for result in results)
     assert all(result.undetermined for result in results)
@@ -228,7 +236,11 @@ def test_unanalysed_risk_is_open_not_passed():
         ScenarioKind.EXPECTED, [_pricing()], config=CONFIG, minimum_confidence=85, currency="EUR"
     )
     results = evaluate_criteria(
-        _calculation(risk_score=None), scenario, criteria=CriteriaConfig(), days_until_deadline=30
+        _calculation(risk_score=None),
+        scenario,
+        criteria=CriteriaConfig(),
+        days_until_deadline=30,
+        minimum_days_until_deadline=3,
     )
     risk = next(result for result in results if result.code == "risk")
     assert risk.undetermined and not risk.passed
@@ -253,6 +265,7 @@ def _scored(coverage: int, margin: float, risk: int | None = 10) -> TenderCalcul
         scenario,
         criteria=CriteriaConfig(minimum_profit_eur=0.0),
         days_until_deadline=30,
+        minimum_days_until_deadline=3,
     )
     calculation.score, calculation.verdict = score_calculation(
         calculation, scenario, scoring=ScoringConfig(), calculation_config=CONFIG

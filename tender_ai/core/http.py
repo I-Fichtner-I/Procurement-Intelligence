@@ -65,6 +65,12 @@ class HttpClient:
         self.stats = HttpStats()
         self.rate_limiter = RateLimiter(config.requests_per_second)
         self.robots = RobotsGuard(config.user_agent, enabled=config.respect_robots)
+        if self.cache is not None:
+            # Einmal je Client: abgelaufene Eintraege raeumen, damit das
+            # Cache-Verzeichnis ueber viele cron-Laeufe nicht unbegrenzt waechst.
+            evicted = self.cache.evict_expired()
+            if evicted:
+                log.debug("cache_evicted", entries=evicted)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(config.timeout, connect=config.connect_timeout),
             headers={"User-Agent": config.user_agent, "Accept-Encoding": "gzip, deflate"},
@@ -134,7 +140,9 @@ class HttpClient:
         full_url = str(request.url)
         body = request.content or None
 
-        cache_key = ResponseCache.make_key(method, full_url, body)
+        cache_key = ResponseCache.make_key(
+            method, full_url, body, auth=request.headers.get("Authorization")
+        )
         if use_cache and self.cache is not None:
             cached = self.cache.get(cache_key)
             if cached is not None:
@@ -301,7 +309,12 @@ def build_http_client(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> HttpClient:
     cache = (
-        ResponseCache(cache_dir, ttl_seconds=config.cache_ttl_seconds, enabled=True)
+        ResponseCache(
+            cache_dir,
+            ttl_seconds=config.cache_ttl_seconds,
+            enabled=True,
+            max_entries=config.cache_max_entries,
+        )
         if config.cache_enabled and cache_dir is not None
         else None
     )

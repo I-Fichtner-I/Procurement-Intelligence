@@ -18,7 +18,7 @@ S = < 2 h, M = halber Tag, L = 1-2 Tage.
 | 2 | T-26 SQLite-PRAGMAs, T-11 Alembic, T-09 changes_for, T-06 Markup-Escape | **erledigt** |
 | 3 | T-10 Dedup-Blocking, T-24 Testluecken + Coverage-Schwelle 85 % | **erledigt** |
 | 4 | T-22 Service-Layer, T-18 Streaming-Downloads, T-23 typisierte Quellkonfigurationen | **erledigt** |
-| 5 | T-15, T-17, T-19, T-21, T-25, T-20, T-27 | offen |
+| 5 | T-15, T-17, T-19, T-21, T-25, T-20, T-27 | **erledigt** |
 
 Nachweise der erledigten Tasks: `.github/workflows/ci.yml`, `uv.lock`,
 `requirements*.txt`, Tests `test_ingest.py::test_failed_upsert_keeps_other_records`
@@ -35,7 +35,26 @@ Recall jenseits des frueheren Limits), `test_registry.py` und die ergaenzten
 CLI-/RSS-Tests (T-24, Coverage 93 % bei einer CI-Schwelle von 85 %),
 `test_services.py` (T-22), `test_http.py::test_download_*` und
 `test_source_rss.py::test_oversized_feed_is_rejected_before_parsing` (T-18),
-`test_config.py::test_typo_in_known_source_is_rejected` (T-23).
+`test_config.py::test_typo_in_known_source_is_rejected` (T-23),
+`test_ingest.py::test_persistence_keeps_event_loop_responsive` (T-15: der
+Event-Loop kommt waehrend der Persistenz von 200 Datensaetzen weiter zum Zug),
+`test_http.py::test_expired_entries_are_evicted_on_client_start` und
+`test_http.py::test_authorization_header_separates_cache_entries` (T-17),
+`test_calculation.py` mit `minimum_days_until_deadline` aus der Suchkonfiguration
+(T-19), `test_ingest.py::test_crashing_run_is_marked_aborted` und
+`test_migrations.py::test_run_status_backfill` (T-20),
+`test_ingest.py::test_log_events_carry_run_id_and_source` (T-21),
+`test_packaging.py` (T-25), `test_repository.py::test_raw_is_stored_beside_the_payload`,
+`test_migrations.py::test_raw_is_moved_out_of_the_payload` und
+`test_raw_storage_scaling.py` (T-27: `tenders.payload` 67 % kleiner bei
+1.000 TED-aehnlichen Datensaetzen - 3.041 KiB auf 995 KiB; die Datei als
+Ganzes waechst um 9 %, weil dieselben Daten nur in eine zweite Tabelle
+umziehen).
+
+**Damit ist die Roadmap vollstaendig umgesetzt.** Offen bleibt allein die
+Verifikation von T-25 im echten Docker-Build (in der Entwicklungsumgebung
+stand kein Daemon zur Verfuegung; die Schritte des Images sind in einer
+frischen venv nachvollzogen).
 
 ---
 

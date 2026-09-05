@@ -201,18 +201,19 @@ dedup:
   match_window_days: 21              # max. Abstand der Veroeffentlichungsdaten
   max_authority_candidates: 200      # Kandidaten je Vergabestelle ausserhalb der Blocking-Gruppe
 
-# --- Mindestkriterien (ab Stufe 4 wirksam, hier bereits vorbereitet) ---------
+# --- Mindestkriterien (ab Stufe 5 wirksam: tender-ai calculate) --------------
+# Die Restfrist ist bewusst kein eigener Wert: sie steht einmal unter
+# search.min_days_until_deadline und gilt fuer Recherche und Bewertung.
 criteria:
   minimum_margin_percent: 15
   minimum_profit_eur: 500
   minimum_roi_percent: 20
   maximum_risk_score: 40
   minimum_match_confidence: 85
-  minimum_days_until_deadline: 3
   preferred_currencies: ["EUR"]
   excluded_categories: []
 
-# --- Score-Klassifizierung (ab Stufe 4 wirksam) ------------------------------
+# --- Score-Klassifizierung (ab Stufe 5 wirksam) ------------------------------
 scoring:
   thresholds:
     very_interesting: 90
