@@ -28,6 +28,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
+from . import __version__
 from .config import Settings, load_settings
 from .core.errors import ConfigError
 from .core.logging import configure_logging, get_logger
@@ -65,6 +66,25 @@ app = typer.Typer(
 )
 console = Console()
 log = get_logger(__name__)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"tender-ai {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Version anzeigen und beenden.",
+    ),
+) -> None:
+    """Gemeinsame Optionen aller Befehle."""
 
 
 # --- Hilfsfunktionen ---------------------------------------------------------

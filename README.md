@@ -331,8 +331,9 @@ tender-ai runs                              # Laufprotokoll + Quellenstatus
 | `tender-ai decide <id> [--approve\|--reject\|--hold]` | Freigabe entscheiden und protokollieren |
 | `tender-ai offer <id> [--out DIR]` | Angebotsentwurf erzeugen (nur nach Freigabe) |
 | `tender-ai export <datei>` | JSON / CSV / XLSX |
-| `tender-ai runs` | letzte Laeufe und Quellenstatus |
-| `tender-ai cache-clear` | HTTP-Cache leeren |
+| `tender-ai runs` | letzte Laeufe (mit Status) und Quellenstatus |
+| `tender-ai cache-clear [--expired]` | HTTP-Cache leeren, wahlweise nur abgelaufene Eintraege |
+| `tender-ai --version` | Version aus den Paketmetadaten |
 
 Wichtige `search`-Optionen: `-k/--keyword`, `--cpv`, `--country`, `-s/--source`,
 `--days`, `--min-deadline-days`, `-n/--limit`, `--no-store`, `--download-docs`,
@@ -405,6 +406,24 @@ Bewertung nicht geaendert haben (Vergleich ueber den Inhalts-Hash).
 Jeder Lauf erkennt neue Ausschreibungen, aktualisiert bekannte und
 protokolliert Aenderungen (Frist, Volumen, Status, Dokumente) in
 `tender_changes` - die Grundlage fuer die spaeteren Benachrichtigungen.
+
+`tender-ai runs` zeigt zu jedem Lauf seinen Status: `finished` (abgeschlossen),
+`running` (laeuft gerade) oder `aborted`. Abgebrochen wird ein Lauf, wenn er
+mit einem Fehler endet - oder wenn der Prozess ihn gar nicht mehr schliessen
+konnte (Absturz, Kill): so ein verwaister Lauf wird beim naechsten Start
+anhand seines Alters erkannt und geschlossen.
+
+### Im Container
+
+```bash
+docker build -t tender-ai .
+docker run --rm -v "$PWD/data:/app/data" tender-ai search --source fixture
+```
+
+Das Image installiert die Abhaengigkeiten aus `requirements.txt` (also aus der
+Lockdatei) und laeuft als unprivilegierter Benutzer. Geschrieben wird
+ausschliesslich in `/app/data` - das eingehaengte Datenverzeichnis. Die Version
+kommt aus den Paketmetadaten: `tender-ai --version`.
 
 ---
 

@@ -10,6 +10,7 @@ dist/
 .env.local
 
 data/*.db
+data/*.db-*          # SQLite im WAL-Modus legt -wal/-shm daneben
 data/cache/
 data/documents/
 data/exports/
