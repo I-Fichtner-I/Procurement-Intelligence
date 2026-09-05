@@ -7,6 +7,14 @@ Ausgabe. Hier wird bewusst nichts formatiert (kein Rich, keine Konsole).
 """
 
 from .analysis import BatchAnalysisReport, analyze_open_tenders, analyze_tender
+from .approval import (
+    ApprovalState,
+    DraftResult,
+    approval_state,
+    create_offer_draft,
+    pipeline_status,
+    record_decision,
+)
 from .calculation import (
     BatchCalculationReport,
     calculate_open_tenders,
@@ -25,20 +33,26 @@ from .search import run_search
 
 __all__ = [
     "BatchAnalysisReport",
+    "ApprovalState",
     "BatchCalculationReport",
     "BatchItemReport",
     "BatchPricingReport",
     "DocumentReport",
+    "DraftResult",
     "DocumentResult",
     "analyze_open_tenders",
     "analyze_tender",
     "calculate_open_tenders",
     "calculate_tender",
+    "approval_state",
     "check_sources",
+    "create_offer_draft",
     "documents_from_db",
     "extract_items_for_open_tenders",
     "extract_tender_items",
     "fetch_documents",
+    "pipeline_status",
+    "record_decision",
     "research_and_store",
     "research_open_tenders",
     "research_prices",

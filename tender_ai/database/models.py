@@ -111,6 +111,9 @@ class TenderRecord(Base):
     calculation: Mapped[CalculationRecord | None] = relationship(
         back_populates="tender", cascade="all, delete-orphan", uselist=False
     )
+    decisions: Mapped[list[DecisionRecord]] = relationship(
+        back_populates="tender", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (Index("ix_tenders_source_source_id", "source", "source_id", unique=True),)
 
@@ -431,6 +434,40 @@ class CalculationRecord(Base):
     calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     tender: Mapped[TenderRecord] = relationship(back_populates="calculation")
+
+
+class DecisionRecord(Base):
+    """Protokoll der Freigabeentscheidungen (Stufe 6).
+
+    Bewusst eine Historie statt eines ueberschriebenen Feldes: wer wann was
+    entschieden hat, muss nachvollziehbar bleiben - gerade wenn eine Freigabe
+    spaeter zurueckgenommen wird.
+
+    ``calculation_fingerprint`` haelt fest, **welche Zahlen** freigegeben
+    wurden. Aendert sich die Kalkulation danach, deckt die alte Zustimmung die
+    neue Rechnung nicht mehr.
+    """
+
+    __tablename__ = "decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tender_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("tenders.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    decided_by: Mapped[str] = mapped_column(String(255))
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+
+    calculation_fingerprint: Mapped[str | None] = mapped_column(String(64), default=None)
+    verdict_at_decision: Mapped[str | None] = mapped_column(String(32), default=None)
+    margin_percent_at_decision: Mapped[float | None] = mapped_column(Float, default=None)
+    sale_total_at_decision: Mapped[float | None] = mapped_column(Float, default=None)
+    currency: Mapped[str | None] = mapped_column(String(8), default=None)
+
+    tender: Mapped[TenderRecord] = relationship(back_populates="decisions")
 
 
 class IngestRunRecord(Base):

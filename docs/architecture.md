@@ -27,9 +27,9 @@ Stufe ein echter Zwischenstand vorhanden statt eines halbfertigen Ganzen.
 | **3** | **Artikel extrahieren** - Spaltenrollen und Einheiten erkennen, `TenderItem` mit Menge, Einheit, Hersteller/Typ, Merkmalen und Fundstelle | **fertig, testbar** |
 | **4** | **Produkt-Matching und Preisrecherche** - begruendete Zuordnung mit `match_confidence`, Preisquellen (Lieferantenlisten), Preisbild je Position | **fertig, testbar** |
 | **5** | **Kosten, Profitabilitaet, Szenarien, Score, Entscheidungsvorlage** - Angebotspreis aus Selbstkosten, Marge gegen Mindestkriterien, Urteil nur bei tragfaehiger Datenlage | **fertig, testbar** |
-| 6 | Dashboard, Benachrichtigungen, Scheduler, Angebotsentwurf | offen |
+| **6** | **Freigabe, Angebotsentwurf, Pipeline-Uebersicht** - Entscheidung eines Menschen als Gate, Entwurf nur danach, Freigabe veraltet bei geaenderter Kalkulation | **fertig, testbar** |
 
-Stufe 6 hat ihre Andockpunkte bereits im Code: `Tender.documents`,
+Erweiterungen (Dashboard, Benachrichtigungen, Scheduler) haben ihre Andockpunkte bereits im Code: `Tender.documents`,
 `TenderRequirements`, die Konfigurationsbloecke `criteria`/`scoring` und die
 Fremdschluessel-Konvention `tender_id` in der Datenbank.
 
@@ -166,6 +166,32 @@ Nutzer -> Angebotsentwurf -> manuelle Pruefung -> manuelle Abgabe. Die
 maschinelle Ausgabe traegt das mit (`is_binding_offer`,
 `requires_user_approval`).
 
+### Stufe 6 (implementiert)
+
+`UserDecision` (Entscheidung mit Person, Zeitpunkt, Begruendung und den Zahlen,
+auf die sie sich bezieht), `ApprovalState` (aktueller Stand plus die Gruende,
+die einen Entwurf sperren) und `OfferDraft` mit `DraftPosition`.
+
+Die Stufe besteht im Wesentlichen aus einer Sperre:
+
+* **Ohne Freigabe kein Entwurf.** `create_offer_draft` prueft den Stand und
+  verweigert sonst - auch eine Vorschau gibt es nicht. Ein Dokument, das
+  aussieht wie ein Angebot, soll ohne menschliche Entscheidung nicht existieren.
+* **Die Freigabe gilt Zahlen.** Ihr `calculation_fingerprint` wird aus Urteil,
+  Abdeckung, Kosten, Angebotspreis, Marge und Positionszahl gebildet - nicht aus
+  dem Zeitstempel. Eine erneute Kalkulation mit gleichem Ergebnis entwertet
+  nichts, eine geaenderte Summe schon.
+* **Entscheidungen sind eine Historie**, kein ueberschriebenes Feld. Wer wann
+  was entschieden hat, bleibt lesbar - gerade wenn eine Freigabe
+  zurueckgenommen wird.
+* **Ueberstimmen ist erlaubt und wird vermerkt.** Eine Freigabe gegen
+  NOT_ASSESSABLE oder gegen verletzte Mindestkriterien traegt ein
+  `override_warning`.
+
+Der Entwurf selbst kennzeichnet sich durchgaengig (Kopf, Fuss, Blattname),
+laesst Bieterangaben und Unterschrift als Platzhalter und fuehrt unbepreiste
+Positionen als Handarbeitszeilen - nicht als Leerstelle.
+
 ### Datenbank (Stufe 1)
 
 `tenders`, `tender_aliases` (weitere Fundstellen derselben Ausschreibung),
@@ -189,7 +215,9 @@ Seit Stufe 5: `calculations` (Urteil, Score, Abdeckung, Erwartungsfall sowie
 Szenarien, Kriterien und Positionen als JSON - die Begruendung bleibt erhalten
 statt aus dem Score zurueckgerechnet zu werden).
 
-Geplant ab Stufe 6: `analysis_history`, Freigabe-Protokoll.
+Seit Stufe 6: `decisions` (Protokoll der Freigaben, mit dem
+`calculation_fingerprint` der freigegebenen Zahlen). `TenderRecord.user_decision`
+haelt den Schnellzugriff fuer Listen; die Wahrheit steht in der Historie.
 
 ---
 

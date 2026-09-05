@@ -20,6 +20,7 @@ from ..config import DedupConfig
 from ..models.analysis import AnalysisResult
 from ..models.calculation import TenderCalculation
 from ..models.common import Provenance, blocking_key, normalize_text, utcnow
+from ..models.decision import UserDecision
 from ..models.document import ExtractedDocument
 from ..models.item import ItemExtractionResult, TenderItem
 from ..models.price import PricingResult
@@ -27,6 +28,7 @@ from ..models.tender import Tender, TenderDocument, TenderStatus
 from ..pipeline.dedup import DuplicateDetector, DuplicateMatch
 from .models import (
     CalculationRecord,
+    DecisionRecord,
     DocumentExtractRecord,
     IngestRunRecord,
     ItemExtractionRecord,
@@ -657,6 +659,44 @@ class TenderRepository:
 
     def calculation_for(self, tender_id: str) -> CalculationRecord | None:
         return self.session.get(CalculationRecord, tender_id)
+
+    def save_decision(
+        self, decision: UserDecision, tender_record: TenderRecord | None = None
+    ) -> DecisionRecord:
+        """Entscheidung anhaengen - die Historie wird nie ueberschrieben."""
+        record = DecisionRecord(
+            tender_id=decision.tender_id,
+            kind=str(decision.kind),
+            decided_by=decision.decided_by,
+            decided_at=decision.decided_at,
+            note=decision.note,
+            calculation_fingerprint=decision.calculation_fingerprint,
+            verdict_at_decision=decision.verdict_at_decision,
+            margin_percent_at_decision=decision.margin_percent_at_decision,
+            sale_total_at_decision=decision.sale_total_at_decision,
+            currency=decision.currency,
+        )
+        self.session.add(record)
+        if tender_record is not None:
+            # Schnellzugriff fuer Listen; die Wahrheit steht in der Historie.
+            tender_record.user_decision = str(decision.kind)
+        self.session.flush()
+        return record
+
+    def decisions_for(self, tender_id: str, limit: int = 50) -> list[DecisionRecord]:
+        """Entscheidungen dieser Ausschreibung, neueste zuerst."""
+        return list(
+            self.session.scalars(
+                select(DecisionRecord)
+                .where(DecisionRecord.tender_id == tender_id)
+                .order_by(DecisionRecord.decided_at.desc(), DecisionRecord.id.desc())
+                .limit(limit)
+            )
+        )
+
+    def latest_decision(self, tender_id: str) -> DecisionRecord | None:
+        decisions = self.decisions_for(tender_id, limit=1)
+        return decisions[0] if decisions else None
 
     def save_requirements(self, record: TenderRecord, tender: Tender) -> None:
         """Erkannte Anforderungen im Tender-Payload festhalten."""
