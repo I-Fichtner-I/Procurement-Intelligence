@@ -40,6 +40,10 @@ testbar, bevor die naechste beginnt.
 >
 > Damit ist die Kette aus dem Auftrag geschlossen - **die Abgabe bleibt
 > Handarbeit.**
+>
+> **Getaktet: `tender-ai pipeline`** faehrt Recherche, Analyse, Positionen,
+> Preise und Kalkulation in einem Durchgang - ein cron-Eintrag statt fuenf.
+> Der Takt endet vor der Freigabe.
 
 ---
 
@@ -327,6 +331,7 @@ tender-ai runs                              # Laufprotokoll + Quellenstatus
 | `tender-ai prices --all [-n N]` | Preise aller laufenden Ausschreibungen recherchieren |
 | `tender-ai calculate <id> [--positions]` | Kosten, Marge, Entscheidungsvorlage (Stufe 5) |
 | `tender-ai calculate --all [-n N]` | priorisierte Vorlage ueber alle Ausschreibungen |
+| `tender-ai pipeline [--stage ...] [--force]` | ganze Kette in einem Takt: Recherche bis Kalkulation |
 | `tender-ai status [--all]` | Pipeline-Uebersicht mit naechstem Schritt (Stufe 6) |
 | `tender-ai decide <id> [--approve\|--reject\|--hold]` | Freigabe entscheiden und protokollieren |
 | `tender-ai offer <id> [--out DIR]` | Angebotsentwurf erzeugen (nur nach Freigabe) |
@@ -392,16 +397,31 @@ cron-Lauf und die interaktive CLI sich nicht gegenseitig blockieren.
 
 ## Automatisierung
 
-Stufe 1 laeuft ueber cron - ein eigener Scheduler kommt, wenn mehrere Stufen zu
-takten sind:
+Ein Befehl taktet die ganze Kette - Recherche, Analyse, Positionen, Preise,
+Kalkulation:
 
-```cron
-0 6 * * * cd /pfad/zum/projekt && .venv/bin/tender-ai search --days 2 >> data/cron.log 2>&1
-30 6 * * * cd /pfad/zum/projekt && .venv/bin/tender-ai analyze --all >> data/cron.log 2>&1
+```bash
+tender-ai pipeline --days 2          # alle Stufen
+tender-ai pipeline --stage prices --stage calculate   # nur ausgewaehlte
 ```
 
-Der Analyselauf ueberspringt Ausschreibungen, die sich seit ihrer letzten
-Bewertung nicht geaendert haben (Vergleich ueber den Inhalts-Hash).
+```cron
+0 6 * * * cd /pfad/zum/projekt && .venv/bin/tender-ai pipeline --days 2 >> data/cron.log 2>&1
+```
+
+Der Takt endet **vor der Freigabe**: ob angeboten wird, entscheidet ein Mensch
+(`tender-ai decide`), und erst danach entsteht ein Entwurf (`tender-ai offer`).
+
+Jede Stufe fasst nur an, was neu oder veraendert ist - verglichen wird der
+Inhalts-Hash der Ausschreibung, nicht der Aenderungszeitstempel (den schreibt
+der Lauf selbst). `--force` rechnet alles neu, etwa nach geaenderten Regeln
+oder Preislisten. Faellt eine Stufe als Ganzes aus, laufen die spaeteren auf
+dem vorhandenen Bestand weiter; einzelne gescheiterte Ausschreibungen stehen
+mit Fehlertext im Bericht. Der Exit-Code ist 1, sobald eine Stufe ausgefallen
+ist - fuer cron und CI auswertbar.
+
+Die Stufen bleiben einzeln aufrufbar (`search`, `analyze --all`, `items --all`,
+`prices --all`, `calculate --all`), wenn nur ein Schritt wiederholt werden soll.
 
 Jeder Lauf erkennt neue Ausschreibungen, aktualisiert bekannte und
 protokolliert Aenderungen (Frist, Volumen, Status, Dokumente) in
@@ -551,7 +571,8 @@ tender_ai/
 ├── core/                  HTTP (Retry/Backoff/Rate-Limit/Cache), robots.txt, Logging, Fehler
 ├── models/                Tender, TenderLot, TenderDocument, Provenance, …
 ├── sources/               base.py, registry.py, ted.py, rss.py, fixture.py, parsing.py
-├── services/              run_search, check_sources, fetch_documents, analyze_tender, extract_tender_items
+├── services/              run_pipeline (Takt) und die Stufen einzeln: run_search, fetch_documents,
+│                       analyze_tender, extract_tender_items, research_prices, calculate_tender
 ├── extraction/            PDF, DOCX, XLSX, HTML, Text/CSV -> Seiten und Tabellen
 ├── analysis/              Anforderungserkennung (Regeln) und Risiko-Score
 ├── items/                 Artikelerkennung: Spaltenrollen, Einheiten, Positionen

@@ -23,6 +23,14 @@ from .calculation import (
 from .documents import DocumentReport, DocumentResult, documents_from_db, fetch_documents
 from .health import check_sources
 from .items import BatchItemReport, extract_items_for_open_tenders, extract_tender_items
+from .pipeline import (
+    STAGES,
+    PipelineReport,
+    StageReport,
+    resolve_stages,
+    run_pipeline,
+    run_pipeline_sync,
+)
 from .pricing import (
     BatchPricingReport,
     research_and_store,
@@ -32,6 +40,7 @@ from .pricing import (
 from .search import run_search
 
 __all__ = [
+    "STAGES",
     "BatchAnalysisReport",
     "ApprovalState",
     "BatchCalculationReport",
@@ -40,6 +49,8 @@ __all__ = [
     "DocumentReport",
     "DraftResult",
     "DocumentResult",
+    "PipelineReport",
+    "StageReport",
     "analyze_open_tenders",
     "analyze_tender",
     "calculate_open_tenders",
@@ -56,5 +67,8 @@ __all__ = [
     "research_and_store",
     "research_open_tenders",
     "research_prices",
+    "resolve_stages",
+    "run_pipeline",
+    "run_pipeline_sync",
     "run_search",
 ]
