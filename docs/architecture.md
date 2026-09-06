@@ -306,8 +306,15 @@ Quellen wird robots.txt geprueft.
    Trefferquote. Ein neues Portal ist damit ein Konfigurationsblock statt eines
    weiteren Parsers - und ein geaendertes Markup eine Zeile statt eines
    Releases.
-4. **Scheduler**: Stufe 1 laeuft ueber cron/systemd (siehe README). Ein
-   eigener Scheduler-Prozess lohnt erst, wenn mehrere Stufen zu takten sind.
+4. **Scheduler**: erledigt, ohne eigenen Prozess. Seit alle sechs Stufen
+   stehen, taktet sie `tender-ai pipeline` in einem Durchgang (Recherche,
+   Analyse, Positionen, Preise, Kalkulation); cron ruft einen Befehl statt
+   fuenf auf. Jede Stufe ueberspringt, was seit dem letzten Lauf unveraendert
+   ist, der Ausfall einer Stufe beendet den Takt nicht, und der Exit-Code
+   meldet ihn. Ein eigener Scheduler-Prozess lohnte sich erst mit
+   Nebenlaeufigkeit ueber mehrere Maschinen - der Takt selbst ist sequenziell,
+   weil die Stufen aufeinander aufbauen. Der Takt endet bewusst vor der
+   Freigabe: `decide` und `offer` bleiben Handarbeit.
 5. **KI-Einsatz**: bewusst noch nicht - in Stufe 1 gibt es keine Aufgabe, die
    Regeln nicht besser loesen. Ab Stufe 2 (Dokumentenanalyse, Tabellen,
    Produkt-Matching) mit verpflichtender Confidence und Rueckverweis auf

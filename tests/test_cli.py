@@ -227,3 +227,35 @@ def test_list_orders_and_filters(settings: Settings):
         assert result.exit_code == 0, result.output
     result = runner.invoke(app, _args(settings, "list", "--search", "aufzuege", "--json"))
     assert len(json.loads(result.stdout)["tenders"]) == 1
+
+
+def test_pipeline_runs_the_whole_chain(settings: Settings):
+    """Ein Aufruf statt fuenf - und die Uebersicht kennt die Ausschreibungen danach."""
+    result = runner.invoke(app, _args(settings, "pipeline", "--source", "fixture"))
+    assert result.exit_code == 0, result.output
+    assert "Pipeline-Lauf" in result.output
+    for stage in ("Recherche", "Analyse", "Positionen", "Preise", "Kalkulation"):
+        assert stage in result.output
+    # Der Takt endet vor der Freigabe.
+    assert "Freigabe bleibt Handarbeit" in result.output
+
+    result = runner.invoke(app, _args(settings, "status"))
+    assert result.exit_code == 0, result.output
+    assert "Pipeline" in result.output
+
+
+def test_pipeline_rejects_an_unknown_stage(settings: Settings):
+    result = runner.invoke(app, _args(settings, "pipeline", "--stage", "preise"))
+    assert result.exit_code == 1
+    assert "Unbekannte Stufe" in result.output
+
+
+def test_pipeline_json_reports_every_stage(settings: Settings):
+    result = runner.invoke(
+        app, _args(settings, "pipeline", "--source", "fixture", "--stage", "search", "--json")
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert [stage["stage"] for stage in payload["stages"]] == ["search"]
+    assert payload["stages"][0]["details"]["new"] == 2

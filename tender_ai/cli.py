@@ -40,6 +40,7 @@ from .models.common import display as _display
 from .models.decision import DecisionKind
 from .models.tender import Tender
 from .services import (
+    STAGES,
     analyze_open_tenders,
     analyze_tender,
     approval_state,
@@ -54,6 +55,7 @@ from .services import (
     record_decision,
     research_and_store,
     research_open_tenders,
+    run_pipeline,
     run_search,
 )
 from .sources.base import SearchQuery
@@ -1555,6 +1557,87 @@ def offer(
         "[dim]Der Entwurf wurde nicht eingereicht. Abgabe erfolgt von Hand ueber "
         "das Vergabeportal.[/dim]"
     )
+
+
+@app.command()
+def pipeline(
+    config: Path | None = typer.Option(None, "--config"),
+    source: list[str] | None = typer.Option(
+        None, "--source", "-s", help="nur diese Quellen recherchieren (mehrfach moeglich)"
+    ),
+    stage: list[str] | None = typer.Option(
+        None,
+        "--stage",
+        help=f"nur diese Stufen ausfuehren (mehrfach moeglich): {', '.join(STAGES)}",
+    ),
+    keyword: list[str] | None = typer.Option(None, "--keyword", "-k"),
+    days: int | None = typer.Option(None, "--days", help="Veroeffentlichung der letzten N Tage"),
+    limit: int = typer.Option(50, "--limit", "-n", help="max. Ausschreibungen je Stufe"),
+    fetch: bool = typer.Option(
+        True, "--fetch/--no-fetch", help="fehlende Unterlagen unterwegs nachladen"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="auch neu berechnen, was sich nicht geaendert hat"
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Die ganze Kette in einem Takt: Recherche bis Kalkulation.
+
+    Endet bewusst vor der Freigabe: ob angeboten wird, entscheidet ein Mensch
+    (`tender-ai decide`), erst danach entsteht ein Entwurf (`tender-ai offer`).
+    """
+    settings = _settings(config)
+    query = _query_from_options(settings, keyword, None, None, days, None, limit)
+
+    try:
+        report = asyncio.run(
+            run_pipeline(
+                settings,
+                query=query,
+                only_sources=source or None,
+                stages=stage or None,
+                limit=limit,
+                fetch_missing=fetch,
+                force=force,
+            )
+        )
+    except ConfigError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        console.print_json(jsonlib.dumps(report.as_dict(), ensure_ascii=False, default=str))
+        raise typer.Exit(0 if report.ok else 1)
+
+    table = Table(title="Pipeline-Lauf", header_style="bold")
+    table.add_column("Stufe")
+    table.add_column("Verarbeitet", justify="right")
+    table.add_column("Fehlgeschlagen", justify="right")
+    table.add_column("Dauer", justify="right")
+    table.add_column("Hinweis", overflow="fold")
+    for entry in report.stages:
+        details = ", ".join(f"{key}: {value}" for key, value in entry.details.items())
+        note = f"[red]{escape(entry.error)}[/red]" if entry.error else escape(details)
+        table.add_row(
+            escape(entry.label) if entry.ok else f"[red]{escape(entry.label)}[/red]",
+            str(entry.processed),
+            str(entry.failed) if entry.failed else "[dim]0[/dim]",
+            f"{entry.duration_seconds:.1f} s",
+            note,
+        )
+    console.print(table)
+
+    if report.failed_records:
+        console.print(
+            f"[yellow]{report.failed_records}[/yellow] Ausschreibung(en) einzeln "
+            "fehlgeschlagen - Details im Protokoll."
+        )
+    console.print(
+        "[dim]Naechster Schritt: [/dim]tender-ai status"
+        "[dim] - die Freigabe bleibt Handarbeit.[/dim]"
+    )
+    if not report.ok:
+        raise typer.Exit(1)
 
 
 @app.command()
