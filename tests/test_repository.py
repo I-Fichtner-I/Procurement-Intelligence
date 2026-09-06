@@ -247,3 +247,22 @@ def test_list_can_load_raw_without_extra_queries_per_record(repository: TenderRe
 
     records = repository.list_tenders(include_raw=True)
     assert {record.raw_record.raw["index"] for record in records} == {0, 1, 2}
+
+
+def test_unchanged_deadline_is_not_reported_as_a_change(repository: TenderRepository):
+    """SQLite gibt Zeitstempel ohne Zeitzone zurueck - das ist keine Aenderung.
+
+    Ohne Angleichung meldete jeder Lauf, bei dem sich irgendetwas anderes
+    aenderte, zusaetzlich eine verschobene Frist - und mit Stufe 8 ginge diese
+    Falschmeldung als Benachrichtigung raus.
+    """
+    deadline = datetime(2036, 9, 15, 10, tzinfo=UTC)
+    repository.upsert(tender(submission_deadline=deadline))
+    repository.session.commit()
+    repository.session.expunge_all()
+
+    repository.upsert(tender(submission_deadline=deadline, title="Lieferung von 3.000 Monitoren"))
+    repository.session.commit()
+
+    fields = [change.field for change in repository.changes_for("ted:1")]
+    assert fields == ["title"]

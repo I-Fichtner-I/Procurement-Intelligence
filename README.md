@@ -50,6 +50,10 @@ testbar, bevor die naechste beginnt.
 > **Getaktet: `tender-ai pipeline`** faehrt Recherche, Analyse, Positionen,
 > Preise und Kalkulation in einem Durchgang - ein cron-Eintrag statt fuenf.
 > Der Takt endet vor der Freigabe.
+>
+> **Stufe 8: `tender-ai notify`** meldet, was neu, geaendert oder fristnah ist
+> und wo eine Entscheidung aussteht - per Mail oder Webhook, je Meldung genau
+> einmal.
 
 ---
 
@@ -337,7 +341,8 @@ tender-ai runs                              # Laufprotokoll + Quellenstatus
 | `tender-ai prices --all [-n N]` | Preise aller laufenden Ausschreibungen recherchieren |
 | `tender-ai calculate <id> [--positions]` | Kosten, Marge, Entscheidungsvorlage (Stufe 5) |
 | `tender-ai calculate --all [-n N]` | priorisierte Vorlage ueber alle Ausschreibungen |
-| `tender-ai pipeline [--stage ...] [--force]` | ganze Kette in einem Takt: Recherche bis Kalkulation |
+| `tender-ai pipeline [--stage ...] [--force]` | ganze Kette in einem Takt: Recherche bis Meldung |
+| `tender-ai notify [--dry-run] [--channel ...]` | neue, geaenderte, fristnahe Ausschreibungen melden (Stufe 8) |
 | `tender-ai status [--all]` | Pipeline-Uebersicht mit naechstem Schritt (Stufe 6) |
 | `tender-ai decide <id> [--approve\|--reject\|--hold]` | Freigabe entscheiden und protokollieren |
 | `tender-ai offer <id> [--out DIR]` | Angebotsentwurf erzeugen (nur nach Freigabe) |
@@ -404,7 +409,7 @@ cron-Lauf und die interaktive CLI sich nicht gegenseitig blockieren.
 ## Automatisierung
 
 Ein Befehl taktet die ganze Kette - Recherche, Analyse, Positionen, Preise,
-Kalkulation:
+Kalkulation, Meldung:
 
 ```bash
 tender-ai pipeline --days 2          # alle Stufen
@@ -427,7 +432,40 @@ mit Fehlertext im Bericht. Der Exit-Code ist 1, sobald eine Stufe ausgefallen
 ist - fuer cron und CI auswertbar.
 
 Die Stufen bleiben einzeln aufrufbar (`search`, `analyze --all`, `items --all`,
-`prices --all`, `calculate --all`), wenn nur ein Schritt wiederholt werden soll.
+`prices --all`, `calculate --all`, `notify`), wenn nur ein Schritt wiederholt
+werden soll.
+
+### Benachrichtigungen (Stufe 8)
+
+Gemeldet wird, was eine Reaktion verlangt:
+
+| Art | Wann |
+|-----|------|
+| `new` | eine Ausschreibung ist neu im Bestand |
+| `changed` | Frist, Volumen, Status, Titel oder Dokumente haben sich geaendert |
+| `deadline` | die Restlaufzeit erreicht eine Schwelle (Standard 7, 3, 1 Tage) |
+| `decision` | eine Kalkulation liegt vor, das Urteil traegt, niemand hat entschieden |
+
+```bash
+tender-ai notify --dry-run     # zeigen, was rausginge - ohne zu senden
+tender-ai notify               # zustellen (Mail und/oder Webhook)
+```
+
+Zwei Zusagen halten das Ganze brauchbar:
+
+- **Je Kanal genau einmal.** Ein Protokoll (`notifications`) haelt fest, was
+  zugestellt wurde. Eine neue Ausschreibung meldet sich einmal, jede Aenderung
+  einmal, jede Fristschwelle einmal - eine wartende Entscheidung erneut, sobald
+  sich die Zahlen aendern.
+- **Nichts geht verloren.** Protokolliert wird erst *nach* erfolgreicher
+  Zustellung. Ist der Mailserver kurz nicht erreichbar, kommt die Meldung beim
+  naechsten Lauf wieder - lieber doppelt als eine verpasste Frist.
+
+Kanaele und Schwellen stehen in `config.yaml` unter `notifications`, die
+Zugangsdaten (`TENDER_AI_SMTP_USER`, `TENDER_AI_SMTP_PASSWORD`,
+`TENDER_AI_WEBHOOK_TOKEN`) ausschliesslich in `.env`. Ohne aktiven Kanal
+sammelt `notify` nur und merkt sich bewusst nichts - sonst waere die erste
+echte Mail leer.
 
 Jeder Lauf erkennt neue Ausschreibungen, aktualisiert bekannte und
 protokolliert Aenderungen (Frist, Volumen, Status, Dokumente) in
@@ -585,6 +623,7 @@ tender_ai/
 ├── pricing/               Produkt-Matching, Preisstatistik, Preisquellen
 ├── calculation/           Kosten, Szenarien, Mindestkriterien, Urteil
 ├── offer/                 Angebotsentwurf (Markdown, XLSX) - nie eine Abgabe
+├── notify/                Meldungen: Ereignisse, Darstellung, Kanaele (Mail, Webhook)
 ├── pipeline/              ingest.py (Lauforchestrierung), dedup.py
 ├── database/              SQLAlchemy-Modelle, Session, Repository, Alembic-Migrationen
 └── export/                JSON / CSV / XLSX

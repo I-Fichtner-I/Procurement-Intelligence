@@ -31,10 +31,15 @@ def test_unknown_stage_is_rejected_with_the_known_names():
 
 
 def test_pipeline_stops_before_the_human_decision():
-    """Freigabe und Angebot sind bewusst nicht Teil des Takts."""
+    """Freigabe und Angebot sind bewusst nicht Teil des Takts.
+
+    Melden (``notify``) gehoert dazu - eine Meldung entscheidet nichts, sie
+    sagt nur, dass jemand entscheiden sollte.
+    """
     assert "decide" not in STAGES
     assert "offer" not in STAGES
-    assert STAGES[-1] == "calculate"
+    assert STAGES[-1] == "notify"
+    assert STAGES.index("calculate") < STAGES.index("notify")
 
 
 async def test_pipeline_runs_the_chain_and_stores_results(settings: Settings):

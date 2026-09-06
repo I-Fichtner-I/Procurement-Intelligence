@@ -57,6 +57,7 @@ from .services import (
     research_open_tenders,
     run_pipeline,
     run_search,
+    send_notifications,
 )
 from .sources.base import SearchQuery
 from .sources.registry import available_types
@@ -1636,6 +1637,77 @@ def pipeline(
         "[dim]Naechster Schritt: [/dim]tender-ai status"
         "[dim] - die Freigabe bleibt Handarbeit.[/dim]"
     )
+    if not report.ok:
+        raise typer.Exit(1)
+
+
+@app.command()
+def notify(
+    config: Path | None = typer.Option(None, "--config"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="nur zeigen, was gemeldet wuerde - nichts zustellen"
+    ),
+    channel: list[str] | None = typer.Option(
+        None, "--channel", help="nur diese Kanaele verwenden: email, webhook"
+    ),
+    limit: int | None = typer.Option(None, "--limit", "-n", help="max. Meldungen je Lauf"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Melden, was neu, geaendert oder fristnah ist (Stufe 8).
+
+    Jede Meldung geht je Kanal genau einmal raus. Was nicht zugestellt werden
+    konnte, wird beim naechsten Lauf erneut versucht.
+    """
+    settings = _settings(config)
+    try:
+        report = asyncio.run(
+            send_notifications(
+                settings, dry_run=dry_run, only_channels=channel or None, limit=limit
+            )
+        )
+    except ConfigError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        console.print_json(jsonlib.dumps(report.as_dict(), ensure_ascii=False, default=str))
+        raise typer.Exit(0 if report.ok else 1)
+
+    if not report.events:
+        console.print("[dim]Nichts zu melden.[/dim]")
+        return
+
+    table = Table(title=f"Meldungen ({len(report.events)})", header_style="bold", show_lines=False)
+    table.add_column("Art")
+    table.add_column("Frist", justify="right")
+    table.add_column("Titel", overflow="fold")
+    table.add_column("Was", overflow="fold")
+    for event in report.events:
+        table.add_row(
+            escape(event.label),
+            f"{event.deadline_days} T" if event.deadline_days is not None else "[dim]?[/dim]",
+            _safe(event.title),
+            _safe(event.detail),
+        )
+    console.print(table)
+
+    if report.dry_run:
+        console.print("[dim]Probelauf - nichts zugestellt, nichts vorgemerkt.[/dim]")
+        return
+
+    if not report.channels:
+        console.print(
+            "[yellow]Kein Kanal aktiv[/yellow] - in config.yaml unter "
+            "[cyan]notifications.email[/cyan] oder [cyan]notifications.webhook[/cyan] "
+            "einschalten."
+        )
+        return
+
+    for result in report.channels:
+        if result.ok:
+            console.print(f"[green]{result.channel}[/green]: {result.sent} Meldung(en) zugestellt.")
+        else:
+            console.print(f"[red]{result.channel}[/red]: {escape(result.error or 'Fehler')}")
     if not report.ok:
         raise typer.Exit(1)
 

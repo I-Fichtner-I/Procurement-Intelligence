@@ -315,7 +315,14 @@ Quellen wird robots.txt geprueft.
    Nebenlaeufigkeit ueber mehrere Maschinen - der Takt selbst ist sequenziell,
    weil die Stufen aufeinander aufbauen. Der Takt endet bewusst vor der
    Freigabe: `decide` und `offer` bleiben Handarbeit.
-5. **KI-Einsatz**: bewusst noch nicht - in Stufe 1 gibt es keine Aufgabe, die
+5. **Benachrichtigungen**: seit Stufe 8 erledigt. `tender_changes` wurde seit
+   Stufe 1 geschrieben, aber von niemandem gelesen; `tender-ai notify` macht
+   daraus Meldungen (neu, geaendert, fristnah, Entscheidung faellig) und stellt
+   sie per Mail oder Webhook zu. Die Zusage lautet: je Kanal genau einmal,
+   protokolliert erst nach erfolgreicher Zustellung - eine verpasste Frist
+   waere teurer als eine doppelte Meldung. Melden ist kein Entscheiden: die
+   Meldung sagt, dass jemand entscheiden sollte, und benennt den Befehl dafuer.
+6. **KI-Einsatz**: bewusst noch nicht - in Stufe 1 gibt es keine Aufgabe, die
    Regeln nicht besser loesen. Ab Stufe 2 (Dokumentenanalyse, Tabellen,
    Produkt-Matching) mit verpflichtender Confidence und Rueckverweis auf
    Dokument, Seite und Originaltext.

@@ -35,6 +35,7 @@ from .models import (
     DocumentExtractRecord,
     IngestRunRecord,
     ItemExtractionRecord,
+    NotificationRecord,
     PriceQuoteRecord,
     PriceResearchRecord,
     RiskAnalysisRecord,
@@ -85,8 +86,17 @@ def _payload_without_raw(tender: Tender) -> dict[str, Any]:
 
 
 def _as_text(value: Any) -> str | None:
+    """Vergleichsform eines Feldwertes fuer die Aenderungserkennung.
+
+    Zeitstempel bekommen dabei UTC aufgepraegt, wenn ihnen die Zeitzone fehlt:
+    SQLite gibt gespeicherte Werte ohne ``tzinfo`` zurueck, waehrend die frisch
+    geparsten Werte der Quellen eine tragen. Ohne diese Angleichung meldete
+    jeder Lauf eine Frist als "geaendert", die unveraendert ist.
+    """
     if value is None:
         return None
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=UTC)).astimezone(UTC).isoformat()
     if isinstance(value, (list, tuple, set)):
         return ", ".join(str(item) for item in value)
     return str(value)
@@ -795,6 +805,50 @@ class TenderRepository:
                 if record.status in TenderStatus.__members__.values()
                 else TenderStatus.UNKNOWN,
             )
+
+    # --- Benachrichtigungen (Stufe 8) --------------------------------------
+    def already_notified(self, channel: str, keys: Iterable[str]) -> set[str]:
+        """Welche dieser Ereignisse wurden ueber diesen Kanal schon gemeldet?"""
+        wanted = list(keys)
+        if not wanted:
+            return set()
+        found: set[str] = set()
+        # In Blöcken abfragen: SQLite begrenzt die Zahl der Parameter je Query.
+        for start in range(0, len(wanted), 500):
+            block = wanted[start : start + 500]
+            found.update(
+                self.session.scalars(
+                    select(NotificationRecord.dedupe_key).where(
+                        NotificationRecord.channel == channel,
+                        NotificationRecord.dedupe_key.in_(block),
+                    )
+                )
+            )
+        return found
+
+    def record_notifications(self, channel: str, entries: Iterable[tuple[str, str, str]]) -> int:
+        """Zustellung protokollieren: (tender_id, kind, dedupe_key) je Eintrag."""
+        count = 0
+        for tender_id, kind, dedupe_key in entries:
+            self.session.add(
+                NotificationRecord(
+                    tender_id=tender_id, kind=kind, dedupe_key=dedupe_key, channel=channel
+                )
+            )
+            count += 1
+        if count:
+            self.session.flush()
+        return count
+
+    def notifications_for(self, tender_id: str, limit: int = 50) -> list[NotificationRecord]:
+        return list(
+            self.session.scalars(
+                select(NotificationRecord)
+                .where(NotificationRecord.tender_id == tender_id)
+                .order_by(NotificationRecord.sent_at.desc())
+                .limit(limit)
+            )
+        )
 
     # --- Laufprotokolle ----------------------------------------------------
     def start_run(self, sources: Iterable[str], query: dict[str, Any]) -> IngestRunRecord:

@@ -119,6 +119,9 @@ class TenderRecord(Base):
     decisions: Mapped[list[DecisionRecord]] = relationship(
         back_populates="tender", cascade="all, delete-orphan"
     )
+    notifications: Mapped[list[NotificationRecord]] = relationship(
+        back_populates="tender", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (Index("ix_tenders_source_source_id", "source", "source_id", unique=True),)
 
@@ -240,6 +243,31 @@ class TenderChangeRecord(Base):
     source: Mapped[str | None] = mapped_column(String(64), default=None)
 
     tender: Mapped[TenderRecord] = relationship(back_populates="changes")
+
+
+class NotificationRecord(Base):
+    """Was schon gemeldet wurde - je Kanal genau einmal (Stufe 8).
+
+    Ohne dieses Protokoll wuerde jeder Lauf dieselbe Ausschreibung erneut
+    melden. ``dedupe_key`` beschreibt das Ereignis so genau, wie es einmalig
+    sein soll: eine neue Ausschreibung einmal, jede Aenderung einmal, jede
+    Fristschwelle einmal.
+    """
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tender_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("tenders.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255))
+    channel: Mapped[str] = mapped_column(String(32))
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+    tender: Mapped[TenderRecord] = relationship(back_populates="notifications")
+
+    __table_args__ = (Index("ix_notifications_channel_key", "channel", "dedupe_key", unique=True),)
 
 
 class RiskAnalysisRecord(Base):
