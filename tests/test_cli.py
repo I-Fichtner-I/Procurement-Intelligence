@@ -259,3 +259,44 @@ def test_pipeline_json_reports_every_stage(settings: Settings):
     assert payload["ok"] is True
     assert [stage["stage"] for stage in payload["stages"]] == ["search"]
     assert payload["stages"][0]["details"]["new"] == 2
+
+
+def test_notify_dry_run_lists_events_without_sending(settings: Settings):
+    runner.invoke(app, _args(settings, "search", "--source", "fixture"))
+
+    result = runner.invoke(app, _args(settings, "notify", "--dry-run"))
+    assert result.exit_code == 0, result.output
+    assert "Meldungen" in result.output
+    assert "Probelauf" in result.output
+
+    # Ein Probelauf merkt sich nichts: derselbe Aufruf zeigt dasselbe erneut.
+    again = runner.invoke(app, _args(settings, "notify", "--dry-run"))
+    assert "Meldungen" in again.output
+
+
+def test_notify_without_channel_says_where_to_switch_one_on(settings: Settings):
+    runner.invoke(app, _args(settings, "search", "--source", "fixture"))
+    result = runner.invoke(app, _args(settings, "notify"))
+    assert result.exit_code == 0, result.output
+    assert "Kein Kanal aktiv" in result.output
+
+
+def test_notify_rejects_an_unknown_channel(settings: Settings):
+    result = runner.invoke(app, _args(settings, "notify", "--channel", "telegramm"))
+    assert result.exit_code == 1
+    assert "Unbekannte" in result.output
+
+
+def test_notify_json_reports_the_events(settings: Settings):
+    runner.invoke(app, _args(settings, "search", "--source", "fixture"))
+    result = runner.invoke(app, _args(settings, "notify", "--dry-run", "--json"))
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["dry_run"] is True
+    assert payload["found"] >= 2
+    assert {event["kind"] for event in payload["events"]} <= {
+        "new",
+        "changed",
+        "deadline",
+        "decision",
+    }

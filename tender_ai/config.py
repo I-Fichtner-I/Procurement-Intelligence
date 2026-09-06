@@ -417,6 +417,52 @@ class ScoringConfig(BaseModel):
     thresholds: ScoringThresholds = Field(default_factory=ScoringThresholds)
 
 
+class EmailChannelConfig(BaseModel):
+    """SMTP-Zugang fuer den Mailversand.
+
+    Zugangsdaten stehen nie hier, sondern in der Umgebung
+    (``TENDER_AI_SMTP_USER`` / ``TENDER_AI_SMTP_PASSWORD``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 587
+    starttls: bool = True
+    sender: str = "tender-ai@localhost"
+    recipients: list[str] = Field(default_factory=list)
+    #: Betreffzeile; {count} wird durch die Zahl der Meldungen ersetzt.
+    subject: str = "tender-ai: {count} neue Meldung(en)"
+
+
+class WebhookChannelConfig(BaseModel):
+    """Beliebiger HTTP-Endpunkt, der die Meldungen als JSON entgegennimmt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    #: Zusaetzliche Kopfzeilen; ein Token gehoert in TENDER_AI_WEBHOOK_TOKEN.
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class NotificationConfig(BaseModel):
+    """Was gemeldet wird und worueber (Stufe 8)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    #: Welche Ereignisarten gemeldet werden - siehe tender_ai.notify.events.
+    kinds: list[str] = Field(default_factory=lambda: ["new", "changed", "deadline", "decision"])
+    #: Bei diesen Restlaufzeiten wird an die Frist erinnert - je Schwelle einmal.
+    deadline_days: list[int] = Field(default_factory=lambda: [7, 3, 1])
+    #: Obergrenze je Lauf, damit ein Erstlauf keine Mail mit tausend Zeilen erzeugt.
+    max_events: int = 200
+    email: EmailChannelConfig = Field(default_factory=EmailChannelConfig)
+    webhook: WebhookChannelConfig = Field(default_factory=WebhookChannelConfig)
+
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "console"
@@ -467,6 +513,7 @@ class Settings(BaseSettings):
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     criteria: CriteriaConfig = Field(default_factory=CriteriaConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # --- Secrets (nur aus Umgebung/.env, nie aus config.yaml) ---
@@ -476,6 +523,11 @@ class Settings(BaseSettings):
     source_api_keys: dict[str, SecretStr] = Field(default_factory=dict)
     #: Abwaertskompatibel: TENDER_AI_TED_API_KEY.
     ted_api_key: SecretStr | None = None
+    #: Zugangsdaten des Mailversands: TENDER_AI_SMTP_USER / TENDER_AI_SMTP_PASSWORD.
+    smtp_user: SecretStr | None = None
+    smtp_password: SecretStr | None = None
+    #: Wird als "Authorization: Bearer <token>" an den Webhook geschickt.
+    webhook_token: SecretStr | None = None
 
     @field_validator("sources", mode="before")
     @classmethod

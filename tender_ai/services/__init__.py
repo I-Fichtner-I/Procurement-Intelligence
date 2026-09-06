@@ -23,6 +23,12 @@ from .calculation import (
 from .documents import DocumentReport, DocumentResult, documents_from_db, fetch_documents
 from .health import check_sources
 from .items import BatchItemReport, extract_items_for_open_tenders, extract_tender_items
+from .notify import (
+    ChannelResult,
+    NotificationReport,
+    send_notifications,
+    send_notifications_sync,
+)
 from .pipeline import (
     STAGES,
     PipelineReport,
@@ -46,6 +52,8 @@ __all__ = [
     "BatchCalculationReport",
     "BatchItemReport",
     "BatchPricingReport",
+    "ChannelResult",
+    "NotificationReport",
     "DocumentReport",
     "DraftResult",
     "DocumentResult",
@@ -68,6 +76,8 @@ __all__ = [
     "research_open_tenders",
     "research_prices",
     "resolve_stages",
+    "send_notifications",
+    "send_notifications_sync",
     "run_pipeline",
     "run_pipeline_sync",
     "run_search",

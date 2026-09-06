@@ -221,6 +221,27 @@ scoring:
     review: 60
     rather_uninteresting: 40
 
+# --- Benachrichtigungen (ab Stufe 8: tender-ai notify) -----------------------
+# Gemeldet wird je Kanal genau einmal. Was nicht zugestellt werden konnte,
+# kommt beim naechsten Lauf erneut - lieber doppelt als gar nicht.
+notifications:
+  enabled: true
+  kinds: ["new", "changed", "deadline", "decision"]
+  deadline_days: [7, 3, 1]   # bei diesen Restlaufzeiten an die Frist erinnern
+  max_events: 200            # Obergrenze je Lauf (schuetzt den Erstlauf)
+  email:
+    enabled: false
+    host: "smtp.example.org"
+    port: 587
+    starttls: true
+    sender: "tender-ai@example.org"
+    recipients: []           # z. B. ["einkauf@example.org"]
+    subject: "tender-ai: {count} neue Meldung(en)"
+  webhook:
+    enabled: false
+    url: ""                  # z. B. ein Chat-Eingang im eigenen Haus
+    headers: {}
+
 # --- Logging -----------------------------------------------------------------
 logging:
   level: "INFO"

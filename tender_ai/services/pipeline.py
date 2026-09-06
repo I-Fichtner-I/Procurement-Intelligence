@@ -29,6 +29,7 @@ from ..sources.base import SearchQuery
 from .analysis import analyze_open_tenders
 from .calculation import calculate_open_tenders
 from .items import extract_items_for_open_tenders
+from .notify import send_notifications
 from .pricing import research_open_tenders
 from .search import run_search
 
@@ -36,8 +37,9 @@ log = get_logger(__name__)
 
 #: Reihenfolge der Stufen. Jede baut auf dem Ergebnis der vorherigen auf:
 #: ohne Unterlagen keine Positionen, ohne Positionen keine Preise, ohne
-#: Preise keine Kalkulation.
-STAGES: tuple[str, ...] = ("search", "analyze", "items", "prices", "calculate")
+#: Preise keine Kalkulation. Zuletzt wird gemeldet, was dabei herauskam -
+#: Melden ist kein Entscheiden, ``decide`` und ``offer`` bleiben aussen vor.
+STAGES: tuple[str, ...] = ("search", "analyze", "items", "prices", "calculate", "notify")
 
 #: Was die Stufen in der Ausgabe heissen.
 STAGE_LABELS: dict[str, str] = {
@@ -46,6 +48,7 @@ STAGE_LABELS: dict[str, str] = {
     "items": "Positionen",
     "prices": "Preise",
     "calculate": "Kalkulation",
+    "notify": "Meldung",
 }
 
 
@@ -232,6 +235,22 @@ async def _run_stage(
         calculation = await asyncio.to_thread(calculate_open_tenders, settings, limit=limit)
         stage.processed = calculation.count
         stage.failed = len(calculation.failed)
+        return
+
+    if name == "notify":
+        notification = await send_notifications(settings)
+        stage.processed = notification.sent
+        stage.ok = notification.ok
+        stage.details = {
+            "gefunden": len(notification.events),
+            "kanaele": [result.channel for result in notification.channels] or "keiner aktiv",
+        }
+        if not notification.ok:
+            stage.error = "; ".join(
+                f"{result.channel}: {result.error}"
+                for result in notification.channels
+                if not result.ok
+            )
         return
 
     raise ConfigError(f"Unbekannte Stufe: {name}")  # pragma: no cover - resolve_stages prueft
