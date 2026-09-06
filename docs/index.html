@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tender-ai</title>
+<meta name="description" content="Kommandozeilenwerkzeug, das oeffentliche Ausschreibungen recherchiert, auswertet und kalkuliert - bis zur Entscheidung, die ein Mensch trifft.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Vergabeakte: Amtsblau auf kuehlem Papier, Randnummern, Haarlinien.
+     Alle Farben stehen als Token im blanken :root - die Themes tauschen
+     ausschliesslich Tokenwerte, nie Komponentenregeln. */
+  :root {
+    --paper: #f3f5f8;
+    --surface: #ffffff;
+    --ink: #131a24;
+    --muted: #5c6875;
+    --rule: #c7d0da;
+    --rule-strong: #97a5b4;
+    --accent: #1d4e89;
+    --accent-soft: #e4ecf6;
+    --stamp: #9c322b;
+    --stamp-soft: #f6e7e5;
+
+    /* Die Konsole ist in beiden Themes dunkel - ein Terminal ist dunkel. */
+    --console-bg: #10161d;
+    --console-fg: #d7dee6;
+    --console-dim: #7d8b9a;
+    --console-accent: #8fb6e4;
+    --console-ok: #7fb682;
+    --console-rule: #263140;
+
+    --measure: 68ch;
+    --step-0: 1rem;
+    --step-1: 1.15rem;
+    --step-2: 1.5rem;
+    --step-3: 2.1rem;
+    --step-4: 3.1rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0f141a;
+      --surface: #161d25;
+      --ink: #e3e9f0;
+      --muted: #97a4b2;
+      --rule: #2a3441;
+      --rule-strong: #3d4b5c;
+      --accent: #7fa9de;
+      --accent-soft: #1a2635;
+      --stamp: #dd8b83;
+      --stamp-soft: #2a1c1b;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #0f141a;
+    --surface: #161d25;
+    --ink: #e3e9f0;
+    --muted: #97a4b2;
+    --rule: #2a3441;
+    --rule-strong: #3d4b5c;
+    --accent: #7fa9de;
+    --accent-soft: #1a2635;
+    --stamp: #dd8b83;
+    --stamp-soft: #2a1c1b;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.6;
+  }
+
+  h1, h2, h3 {
+    font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+    font-weight: 600;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  p { margin: 0; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  code, kbd, pre { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace; }
+
+  /* --- Seitenraster: Randspalte + Satzspiegel ---------------------------- */
+  .sheet {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 0 clamp(1rem, 4vw, 2.5rem);
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0 2rem;
+    align-items: start;
+  }
+
+  .row > .margin-note {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.45rem;
+  }
+
+  @media (max-width: 46rem) {
+    .row { grid-template-columns: minmax(0, 1fr); gap: 0.35rem; }
+    .row > .margin-note { padding-top: 0; }
+  }
+
+  /* --- Kopf -------------------------------------------------------------- */
+  .masthead {
+    border-bottom: 1px solid var(--rule-strong);
+    padding: clamp(2.5rem, 7vw, 4.5rem) 0 2rem;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1.1rem;
+  }
+
+  .masthead h1 {
+    font-size: var(--step-4);
+    letter-spacing: -0.01em;
+  }
+
+  .masthead .lede {
+    max-width: var(--measure);
+    font-size: var(--step-1);
+    color: var(--ink);
+    margin-top: 1rem;
+  }
+
+  .masthead .sub {
+    max-width: var(--measure);
+    color: var(--muted);
+    margin-top: 0.85rem;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    margin-top: 1.9rem;
+  }
+
+  .btn {
+    display: inline-block;
+    padding: 0.6rem 1.15rem;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--accent);
+    background: transparent;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--paper);
+  }
+
+  .btn:hover { background: var(--accent-soft); color: var(--accent); }
+  .btn-primary:hover { background: var(--accent); color: var(--paper); opacity: 0.88; }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 2.25rem;
+    margin-top: 2rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--rule);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .facts b { color: var(--ink); font-weight: 500; }
+
+  /* --- Abschnitte -------------------------------------------------------- */
+  section { padding: clamp(2.5rem, 6vw, 3.75rem) 0; border-bottom: 1px solid var(--rule); }
+
+  section h2 { font-size: var(--step-3); }
+
+  .section-intro {
+    max-width: var(--measure);
+    color: var(--muted);
+    margin-top: 0.9rem;
+  }
+
+  .body-text { max-width: var(--measure); margin-top: 1.1rem; }
+
+  /* --- Konsole ----------------------------------------------------------- */
+  .console {
+    margin-top: 1.8rem;
+    background: var(--console-bg);
+    border: 1px solid var(--console-rule);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .console-bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--console-rule);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.76rem;
+    color: var(--console-dim);
+  }
+
+  .console pre {
+    margin: 0;
+    padding: 1rem 0.9rem 1.2rem;
+    overflow-x: auto;
+    font-size: 0.79rem;
+    line-height: 1.45;
+    color: var(--console-fg);
+  }
+
+  .console .cmd { color: var(--console-accent); }
+  .console .dim { color: var(--console-dim); }
+  .console .ok { color: var(--console-ok); }
+
+  /* --- Stufenliste ------------------------------------------------------- */
+  .stages { margin-top: 2rem; display: flex; flex-direction: column; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0 2rem;
+    padding: 1.15rem 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .stage:last-child { border-bottom: 1px solid var(--rule); }
+
+  .stage-no {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    padding-top: 0.15rem;
+  }
+
+  .stage h3 { font-size: var(--step-1); }
+
+  .stage p { color: var(--muted); margin-top: 0.3rem; max-width: var(--measure); }
+
+  .stage code {
+    display: inline-block;
+    margin-top: 0.55rem;
+    font-size: 0.82rem;
+    padding: 0.15rem 0.45rem;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 2px;
+  }
+
+  @media (max-width: 46rem) {
+    .stage { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; }
+  }
+
+  /* --- Grenzen ----------------------------------------------------------- */
+  .limits { margin-top: 1.8rem; display: flex; flex-direction: column; gap: 1.4rem; }
+
+  .limit {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0 2rem;
+  }
+
+  .limit-tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--stamp);
+    border: 1px solid var(--stamp);
+    background: var(--stamp-soft);
+    border-radius: 2px;
+    padding: 0.1rem 0.35rem;
+    justify-self: start;
+    height: fit-content;
+    margin-top: 0.2rem;
+  }
+
+  .limit h3 { font-size: var(--step-1); }
+  .limit p { color: var(--muted); margin-top: 0.3rem; max-width: var(--measure); }
+
+  @media (max-width: 46rem) {
+    .limit { grid-template-columns: minmax(0, 1fr); gap: 0.45rem; }
+  }
+
+  /* --- Codebloecke ------------------------------------------------------- */
+  .snippet { margin-top: 1.5rem; }
+
+  .snippet h3 {
+    font-size: 0.82rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.55rem;
+  }
+
+  .snippet pre {
+    margin: 0;
+    padding: 0.95rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--accent);
+    border-radius: 2px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.65;
+  }
+
+  .snippet .comment { color: var(--muted); }
+
+  /* --- Befehlstabelle ---------------------------------------------------- */
+  .table-wrap { margin-top: 1.8rem; overflow-x: auto; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+
+  th, td { text-align: left; padding: 0.6rem 0.9rem 0.6rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+
+  thead th {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+
+  td code { font-size: 0.84rem; color: var(--accent); white-space: nowrap; }
+
+  td:last-child { color: var(--muted); padding-right: 0; }
+
+  /* --- Fuss -------------------------------------------------------------- */
+  footer { padding: 2.5rem 0 3.5rem; color: var(--muted); font-size: 0.88rem; }
+
+  footer p { max-width: var(--measure); }
+  footer a { overflow-wrap: anywhere; }
+  footer p + p { margin-top: 0.7rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">CLI · Python</div>
+      <div>
+        <p class="eyebrow">Procurement Intelligence Agent</p>
+        <h1>tender-ai</h1>
+        <p class="lede">
+          Findet oeffentliche Ausschreibungen, liest die Vergabeunterlagen, erkennt
+          die Positionen des Leistungsverzeichnisses, recherchiert Preise dazu und
+          rechnet aus, ob sich ein Angebot lohnt.
+        </p>
+        <p class="sub">
+          Ein Kommandozeilenwerkzeug fuer den eigenen Rechner oder Server. Jede Angabe
+          traegt ihre Quelle, fehlende Werte heissen <code>UNKNOWN</code> statt geraten
+          zu werden - und die Entscheidung, ob angeboten wird, trifft ein Mensch.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="https://github.com/I-Fichtner-I/Procurement-Intelligence">Repository ansehen</a>
+          <a class="btn" href="#installation">Installieren</a>
+        </div>
+        <div class="facts">
+          <span><b>6</b> Stufen</span>
+          <span><b>455</b> Tests</span>
+          <span>Python <b>3.12+</b></span>
+          <span>offline testbar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<section id="takt">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Der Takt</div>
+      <div>
+        <h2>Ein Befehl fuer die ganze Kette</h2>
+        <p class="section-intro">
+          <code>tender-ai pipeline</code> faehrt Recherche, Analyse, Positionen, Preise
+          und Kalkulation in einem Durchgang - im cron-Eintrag eine Zeile statt fuenf.
+          Jede Stufe fasst nur an, was sich seit dem letzten Lauf geaendert hat.
+        </p>
+
+        <div class="console">
+          <div class="console-bar">
+            <span>tender-ai pipeline</span>
+            <span>Beispiellauf gegen die mitgelieferten Demodaten</span>
+          </div>
+<pre><span class="cmd">$ tender-ai pipeline --source fixture</span>
+
+                                 Pipeline-Lauf
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Stufe       ┃ Verarbeitet ┃ Fehlgeschlagen ┃  Dauer ┃ Hinweis                ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Recherche   │           2 │              0 │  0.7 s │ new: 2, updated: 0     │
+│ Analyse     │           2 │              0 │ 13.5 s │                        │
+│ Positionen  │           2 │              0 │ 12.0 s │ items: 0               │
+│ Preise      │           0 │              0 │  0.0 s │                        │
+│ Kalkulation │           0 │              0 │  0.0 s │                        │
+└─────────────┴─────────────┴────────────────┴────────┴────────────────────────┘
+<span class="dim">Naechster Schritt: tender-ai status - die Freigabe bleibt Handarbeit.</span></pre>
+        </div>
+
+        <p class="body-text">
+          Faellt eine Stufe aus, arbeiten die spaeteren auf dem vorhandenen Bestand
+          weiter; der Bericht nennt die ausgefallene Stufe mit Fehlertext, und der
+          Exit-Code meldet sie an cron.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="stufen">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Stufen 1&ndash;6</div>
+      <div>
+        <h2>Was in der Kette passiert</h2>
+        <p class="section-intro">
+          Die Reihenfolge ist keine Gliederung, sondern eine Abhaengigkeit: ohne
+          Unterlagen keine Positionen, ohne Positionen keine Preise, ohne Preise
+          keine Kalkulation. Jede Stufe laeuft auch einzeln.
+        </p>
+
+        <div class="stages">
+          <article class="stage">
+            <div class="stage-no">01</div>
+            <div>
+              <h3>Recherchieren</h3>
+              <p>
+                TED, RSS-Portale und Vergabeportale ohne Schnittstelle (ueber
+                konfigurierbare Selektoren). Dubletten ueber mehrere Quellen hinweg
+                werden erkannt, Aenderungen an Frist, Volumen und Status protokolliert.
+              </p>
+              <code>tender-ai search</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">02</div>
+            <div>
+              <h3>Unterlagen auslesen und bewerten</h3>
+              <p>
+                Laedt die frei zugaenglichen Vergabeunterlagen und liest Text und
+                Tabellen aus PDF, DOCX, XLSX, HTML und CSV. Daraus erkennt es
+                Anforderungen - Zertifikate, Zahlungs- und Lieferbedingungen,
+                Herstellerbindung - und begruendet einen Risiko-Score.
+              </p>
+              <code>tender-ai documents &lt;id&gt; · analyze &lt;id&gt;</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">03</div>
+            <div>
+              <h3>Positionen erkennen</h3>
+              <p>
+                Aus den erkannten Tabellen die zu liefernden Positionen: Ordnungszahl,
+                Bezeichnung, Menge, Einheit, Hersteller, Typ, Artikelnummer - jede mit
+                Fundstelle und Konfidenz.
+              </p>
+              <code>tender-ai items &lt;id&gt;</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">04</div>
+            <div>
+              <h3>Preise recherchieren</h3>
+              <p>
+                Befragt die konfigurierten Preisquellen (Lieferantenpreislisten als CSV,
+                XLSX, JSON), ordnet Treffer begruendet zu und verdichtet sie zu einem
+                Preisbild - mit Netto/Brutto-Status, Staffelpreisen, Versandkosten und
+                Verfuegbarkeit.
+              </p>
+              <code>tender-ai prices &lt;id&gt;</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">05</div>
+            <div>
+              <h3>Kalkulieren und bewerten</h3>
+              <p>
+                Rechnet Einkauf, Versand und Zuschlaege zu Selbstkosten, daraus einen
+                Angebotspreis, und prueft das Ergebnis gegen die Mindestkriterien.
+                Fehlende Daten gelten nie als erfuelltes Kriterium, sondern als offen.
+              </p>
+              <code>tender-ai calculate &lt;id&gt;</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">06</div>
+            <div>
+              <h3>Freigeben und Entwurf erzeugen</h3>
+              <p>
+                Haelt die Entscheidung eines Menschen fest und erzeugt daraufhin einen
+                Angebots<wbr>entwurf als Markdown und XLSX. <code>status</code> zeigt zu
+                jeder Ausschreibung, wo sie steht und was der naechste Schritt waere.
+              </p>
+              <code>tender-ai decide &lt;id&gt; --approve · offer &lt;id&gt;</code>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="grenzen">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Grenzen</div>
+      <div>
+        <h2>Was das Werkzeug nicht tut</h2>
+        <p class="section-intro">
+          Die Grenzen sind keine fehlenden Funktionen, sondern Entscheidungen. Sie
+          stehen als Tests im Projekt, damit sie nicht versehentlich aufweichen.
+        </p>
+
+        <div class="limits">
+          <article class="limit">
+            <div class="limit-tag">Abgabe</div>
+            <div>
+              <h3>Kein Angebot wird eingereicht</h3>
+              <p>
+                Der Takt endet vor der Freigabe. Was entsteht, ist ein Entwurf zum
+                Pruefen; die Abgabe erfolgt von Hand ueber das Vergabeportal. Der
+                Ablauf bleibt: Analyse &rarr; Freigabe durch den Nutzer &rarr; Entwurf
+                &rarr; manuelle Pruefung &rarr; manuelle Abgabe.
+              </p>
+            </div>
+          </article>
+
+          <article class="limit">
+            <div class="limit-tag">Zugang</div>
+            <div>
+              <h3>Keine Umgehung von Schutzmechanismen</h3>
+              <p>
+                Gelesen werden ausschliesslich oeffentlich erreichbare Seiten. Captchas,
+                Logins und Paywalls werden nicht umgangen, robots.txt wird beachtet -
+                eine Sperre erscheint als Quellfehler im Bericht, nicht als Umweg.
+              </p>
+            </div>
+          </article>
+
+          <article class="limit">
+            <div class="limit-tag">Daten</div>
+            <div>
+              <h3>Keine erfundenen Angaben</h3>
+              <p>
+                Fehlende Werte erscheinen als <code>UNKNOWN</code>, Schaetzungen sind als
+                solche gekennzeichnet, und jede Angabe traegt Quelle und Abrufzeitpunkt.
+                Eine Datenluecke sieht nie aus wie ein Ergebnis.
+              </p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="installation">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Installieren</div>
+      <div>
+        <h2>In fuenf Minuten laufend</h2>
+        <p class="section-intro">
+          Es gibt nichts zu registrieren und keinen Dienst dazwischen: das Werkzeug
+          laeuft auf deinem Rechner, die Datenbank ist eine Datei im Projektordner.
+          API-Schluessel sind optional und stehen in <code>.env</code>.
+        </p>
+
+        <div class="snippet">
+          <h3>Aus dem Repository</h3>
+<pre>git clone https://github.com/I-Fichtner-I/Procurement-Intelligence.git
+cd Procurement-Intelligence
+
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+tender-ai init          <span class="comment"># Verzeichnisse und Datenbank anlegen</span></pre>
+        </div>
+
+        <div class="snippet">
+          <h3>Ohne Netz ausprobieren</h3>
+<pre>tender-ai search --source fixture   <span class="comment"># Demodaten aus data/fixtures/</span>
+tender-ai list
+tender-ai status</pre>
+        </div>
+
+        <div class="snippet">
+          <h3>Im Container</h3>
+<pre>docker build -t tender-ai .
+docker run --rm -v "$PWD/data:/app/data" tender-ai search --source fixture</pre>
+        </div>
+
+        <p class="body-text">
+          Vor dem ersten echten Lauf lohnt <code>tender-ai doctor</code>: der Befehl
+          prueft jede konfigurierte Quelle einzeln gegen den echten Endpunkt und meldet,
+          welche Felder ankommen.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="befehle">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Befehle</div>
+      <div>
+        <h2>Uebersicht</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Befehl</th><th scope="col">Wofuer</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>tender-ai init</code></td><td>Verzeichnisse und Datenbank anlegen</td></tr>
+              <tr><td><code>tender-ai doctor</code></td><td>jede Quelle einzeln gegen den echten Endpunkt pruefen</td></tr>
+              <tr><td><code>tender-ai search</code></td><td>Ausschreibungen recherchieren und speichern</td></tr>
+              <tr><td><code>tender-ai pipeline</code></td><td>ganze Kette in einem Takt: Recherche bis Kalkulation</td></tr>
+              <tr><td><code>tender-ai list</code> · <code>show &lt;id&gt;</code></td><td>Bestand ansehen, Details mit Fundstellen</td></tr>
+              <tr><td><code>tender-ai documents &lt;id&gt;</code></td><td>Vergabeunterlagen laden und auslesen</td></tr>
+              <tr><td><code>tender-ai analyze &lt;id&gt;</code></td><td>Anforderungen erkennen, Risiko begruenden</td></tr>
+              <tr><td><code>tender-ai items &lt;id&gt;</code></td><td>Positionen des Leistungsverzeichnisses erkennen</td></tr>
+              <tr><td><code>tender-ai prices &lt;id&gt;</code></td><td>Preise zu den Positionen recherchieren</td></tr>
+              <tr><td><code>tender-ai calculate &lt;id&gt;</code></td><td>Kosten, Marge, Entscheidungsvorlage</td></tr>
+              <tr><td><code>tender-ai decide &lt;id&gt;</code></td><td>Freigabe entscheiden und protokollieren</td></tr>
+              <tr><td><code>tender-ai offer &lt;id&gt;</code></td><td>Angebotsentwurf erzeugen (nur nach Freigabe)</td></tr>
+              <tr><td><code>tender-ai status</code></td><td>wo jede Ausschreibung steht und was fehlt</td></tr>
+              <tr><td><code>tender-ai export &lt;datei&gt;</code></td><td>JSON, CSV oder XLSX</td></tr>
+              <tr><td><code>tender-ai runs</code></td><td>Laufprotokoll mit Status und Quellenzustand</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Hinweis</div>
+      <div>
+        <p>
+          Diese Seite beschreibt die Software. Sie enthaelt keine Ausschreibungsdaten,
+          Preise oder Kalkulationen - die bleiben auf dem Rechner, auf dem das Werkzeug
+          laeuft.
+        </p>
+        <p>
+          Quellcode, Architekturdokumentation und Optimierungs-Roadmap:
+          <a href="https://github.com/I-Fichtner-I/Procurement-Intelligence">github.com/I-Fichtner-I/Procurement-Intelligence</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

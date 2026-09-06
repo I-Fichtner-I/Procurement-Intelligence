@@ -22,3 +22,6 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 .DS_Store
+
+# Werkzeuge, die gelegentlich per npm hier landen (z. B. Playwright fuer Screenshots)
+node_modules/

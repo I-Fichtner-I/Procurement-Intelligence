@@ -3,6 +3,12 @@
 Automatisierte Recherche, Analyse und Profitabilitaetsbewertung oeffentlicher
 Ausschreibungen.
 
+Projektseite (Funktionen und Installation auf einen Blick):
+**https://i-fichtner-i.github.io/Procurement-Intelligence/** - Quelle:
+[`docs/index.html`](docs/index.html). Sie beschreibt ausschliesslich die
+Software; Ausschreibungsdaten, Preise und Kalkulationen bleiben auf dem
+Rechner, auf dem das Werkzeug laeuft.
+
 Das Projekt wird **stufenweise** gebaut: jede Stufe ist einzeln lauffaehig und
 testbar, bevor die naechste beginnt.
 
