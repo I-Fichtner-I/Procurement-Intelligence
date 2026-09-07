@@ -1642,6 +1642,49 @@ def pipeline(
 
 
 @app.command()
+def serve(
+    config: Path | None = typer.Option(None, "--config"),
+    host: str | None = typer.Option(
+        None, "--host", help="Standard: 127.0.0.1 (nur dieser Rechner)"
+    ),
+    port: int | None = typer.Option(None, "--port"),
+) -> None:
+    """Weboberflaeche starten: Uebersicht, Details, Freigabe (Stufe 9).
+
+    Ohne Zugangstoken laeuft sie ausschliesslich auf 127.0.0.1. Wer sie weiter
+    oeffnet, setzt TENDER_AI_WEB_TOKEN - und gehoert hinter TLS.
+    """
+    settings = _settings(config)
+    try:
+        from .web import create_app
+    except ImportError as exc:  # pragma: no cover - haengt an der Installation
+        console.print(
+            "[red]Die Weboberflaeche ist nicht installiert.[/red] "
+            'Nachinstallieren mit: [cyan]pip install -e ".[web]"[/cyan]'
+        )
+        raise typer.Exit(1) from exc
+
+    import uvicorn
+
+    if host:
+        settings.web.host = host
+    if port:
+        settings.web.port = port
+
+    try:
+        application = create_app(settings)
+    except ConfigError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1) from exc
+
+    console.print(
+        f"Oberflaeche laeuft auf [cyan]http://{escape(settings.web.host)}:{settings.web.port}[/cyan]"
+        + ("" if settings.web_token else "  [dim](nur dieser Rechner)[/dim]")
+    )
+    uvicorn.run(application, host=settings.web.host, port=settings.web.port, log_level="warning")
+
+
+@app.command()
 def notify(
     config: Path | None = typer.Option(None, "--config"),
     dry_run: bool = typer.Option(

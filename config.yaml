@@ -242,6 +242,16 @@ notifications:
     url: ""                  # z. B. ein Chat-Eingang im eigenen Haus
     headers: {}
 
+# --- Weboberflaeche (ab Stufe 9: tender-ai serve) ----------------------------
+# Standard ist 127.0.0.1: die Oberflaeche zeigt Einkaufspreise, Margen und
+# Entscheidungen. Wer sie weiter oeffnet, braucht TENDER_AI_WEB_TOKEN - ohne
+# den verweigert der Start - und gehoert hinter TLS (Reverse Proxy).
+web:
+  host: "127.0.0.1"
+  port: 8080
+  decided_by: ""             # Vorbelegung des Namensfeldes bei einer Freigabe
+  title: "tender-ai"
+
 # --- Logging -----------------------------------------------------------------
 logging:
   level: "INFO"
