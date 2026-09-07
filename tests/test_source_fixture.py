@@ -141,7 +141,7 @@ def test_mitgelieferte_demodaten_sind_vollstaendig():
 
     Sonst verspricht die Anleitung einen Offline-Lauf, der nach Stufe 2 endet.
     """
-    fixture = Path("data/fixtures/sample_tenders.json")
+    fixture = Path(__file__).resolve().parents[1] / "data" / "fixtures" / "sample_tenders.json"
     payload = json.loads(fixture.read_text(encoding="utf-8"))
     local = [
         document
