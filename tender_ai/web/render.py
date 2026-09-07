@@ -72,10 +72,20 @@ form.decide .buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 button { font: inherit; padding: 0.45rem 0.9rem; border-radius: 2px; cursor: pointer;
   border: 1px solid var(--accent); background: var(--accent); color: var(--paper); }
 button.secondary { background: transparent; color: var(--accent); }
+.btn-link { display: inline-block; padding: 0.45rem 0.9rem; border: 1px solid var(--accent);
+  border-radius: 2px; color: var(--accent); text-decoration: none; font-size: 0.95rem; }
 .note { border-left: 2px solid var(--warn); padding: 0.5rem 0.85rem; margin: 0.75rem 0;
   background: var(--surface); color: var(--muted); font-size: 0.9rem; }
 .note-bad { border-left-color: var(--bad); }
 .hint { color: var(--muted); font-size: 0.85rem; margin-top: 1.5rem; }
+form.filter { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+  margin: 0 0 1.1rem; }
+form.filter input[type=search], form.filter select { padding: 0.35rem 0.5rem;
+  border: 1px solid var(--rule); border-radius: 2px; background: var(--surface);
+  color: var(--ink); font: inherit; }
+form.filter input[type=search] { min-width: 18rem; }
+form.filter .check { display: flex; align-items: center; gap: 0.3rem;
+  color: var(--muted); font-size: 0.9rem; }
 """
 
 
@@ -138,11 +148,50 @@ def _criterion_pill(item: dict[str, Any]) -> str:
     return '<span class="pill pill-open">offen</span>'
 
 
-def overview(rows: list[PipelineRow], *, open_only: bool) -> str:
+#: Filter der Uebersicht - Schluessel steht in der URL, Text in der Auswahl.
+FILTERS: dict[str, str] = {
+    "": "alle",
+    "todo": "wartet auf mich",
+    "decided": "entschieden",
+}
+
+
+def _filter_bar(*, query: str, open_only: bool, active: str) -> str:
+    """Suche und Filter als Formular - so bleibt jede Ansicht ein Lesezeichen."""
+    options = "".join(
+        f'<option value="{escape(key)}"{" selected" if key == active else ""}>'
+        f"{escape(label)}</option>"
+        for key, label in FILTERS.items()
+    )
+    checked = "" if open_only else " checked"
+    return (
+        '<form class="filter" method="get" action="/">'
+        f'<input type="search" name="q" value="{escape(query)}" '
+        'placeholder="Titel oder Vergabestelle" aria-label="Suche">'
+        f'<select name="filter" aria-label="Filter">{options}</select>'
+        f'<label class="check"><input type="checkbox" name="all" value="1"{checked}>'
+        " auch abgelaufene</label>"
+        '<button type="submit">Anzeigen</button>'
+        "</form>"
+    )
+
+
+def overview(
+    rows: list[PipelineRow],
+    *,
+    open_only: bool,
+    query: str = "",
+    active_filter: str = "",
+) -> str:
     """Die Liste, mit der jemand seinen Tag beginnt: Frist zuerst."""
+    bar = _filter_bar(query=query, open_only=open_only, active=active_filter)
     if not rows:
-        leer = "Keine laufenden Ausschreibungen." if open_only else "Keine Ausschreibungen."
-        return f'<h2>Uebersicht</h2><p class="lede">{leer}</p>'
+        leer = (
+            "Nichts gefunden."
+            if query or active_filter
+            else ("Keine laufenden Ausschreibungen." if open_only else "Keine Ausschreibungen.")
+        )
+        return f'<h2>Uebersicht</h2>{bar}<p class="lede">{leer}</p>'
 
     stages = (
         ("unterlagen", "Unt."),
@@ -172,6 +221,7 @@ def overview(rows: list[PipelineRow], *, open_only: bool) -> str:
 
     return (
         f"<h2>Uebersicht ({len(rows)})</h2>"
+        f"{bar}"
         '<p class="lede">Nach Frist sortiert. Ein Haken heisst: diese Stufe ist gelaufen. '
         "Die Entscheidung trifft ein Mensch.</p>"
         '<div class="wrap"><table><thead><tr>'
@@ -199,6 +249,8 @@ def detail(
     changes: list[Any],
     blockers: list[str],
     is_stale: bool,
+    allows_draft: bool,
+    has_draft: bool,
     csrf_token: str,
     decided_by: str,
     message: str | None = None,
@@ -294,6 +346,14 @@ def detail(
     parts.append(
         _decision_section(decisions, blockers, is_stale, csrf_token, decided_by, record.id)
     )
+    parts.append(
+        _draft_section(
+            allowed=allows_draft,
+            has_draft=has_draft,
+            csrf_token=csrf_token,
+            tender_id=record.id,
+        )
+    )
 
     if changes:
         rows = "".join(
@@ -312,9 +372,37 @@ def detail(
         )
 
     parts.append(
-        '<p class="hint">Diese Oberflaeche gibt kein Angebot ab. Nach einer Freigabe '
-        "erzeugt <code>tender-ai offer</code> einen Entwurf, den ein Mensch prueft "
-        "und selbst einreicht.</p>"
+        '<p class="hint">Diese Oberflaeche gibt kein Angebot ab. Ein Entwurf ist ein '
+        "Entwurf: pruefen, ergaenzen, selbst einreichen.</p>"
+    )
+    return "".join(parts)
+
+
+def _draft_section(*, allowed: bool, has_draft: bool, csrf_token: str, tender_id: str) -> str:
+    """Entwurf erzeugen - erst nach Freigabe, und nie als Angebot."""
+    parts = ["<h3>Angebotsentwurf</h3>"]
+    if not allowed:
+        parts.append(
+            '<div class="note">Ein Entwurf entsteht erst nach der Freigabe - '
+            "auch nicht &quot;nur zur Ansicht&quot;.</div>"
+        )
+        return "".join(parts)
+
+    ansehen = (
+        f'<a class="btn-link" href="/tender/{escape(tender_id)}/draft.md">'
+        "letzten Entwurf ansehen</a>"
+        if has_draft
+        else ""
+    )
+    parts.append(
+        f'<form class="decide" method="post" action="/tender/{escape(tender_id)}/draft">'
+        f'<input type="hidden" name="{CSRF_FIELD}" value="{escape(csrf_token)}">'
+        '<div class="buttons"><button type="submit">Entwurf erzeugen</button>'
+        f"{ansehen}</div></form>"
+    )
+    parts.append(
+        '<p class="hint">Die Dateien (Markdown und XLSX) liegen danach in '
+        "<code>data/offers</code>.</p>"
     )
     return "".join(parts)
 

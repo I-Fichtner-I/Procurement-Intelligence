@@ -314,3 +314,107 @@ def test_changes_are_listed_in_the_detail_view(client: TestClient, stored: Setti
     body = client.get("/tender/ted:1").text
     assert "Aenderungen" in body
     assert "3.000 Monitoren" in body
+
+
+# --- Entwurf aus der Oberflaeche ----------------------------------------------
+def test_draft_button_appears_only_after_approval(client: TestClient, stored: Settings):
+    """Ohne Freigabe kein Entwurf - auch nicht 'nur zur Ansicht'."""
+    body = client.get("/tender/ted:1").text
+    assert "Angebotsentwurf" in body
+    assert "erst nach der Freigabe" in body
+    assert "Entwurf erzeugen" not in body
+
+    _with_calculation(stored)
+    token = _csrf(client)
+    client.post(
+        "/tender/ted:1/decide",
+        data={"kind": "APPROVED", "decided_by": "Justin", "csrf_token": token},
+    )
+    assert "Entwurf erzeugen" in client.get("/tender/ted:1").text
+
+
+def test_draft_is_created_and_can_be_read(client: TestClient, stored: Settings):
+    _with_calculation(stored)
+    token = _csrf(client)
+    client.post(
+        "/tender/ted:1/decide",
+        data={"kind": "APPROVED", "decided_by": "Justin", "csrf_token": token},
+    )
+
+    created = client.post("/tender/ted:1/draft", data={"csrf_token": token}, follow_redirects=False)
+    assert created.status_code == 303
+    assert "Entwurf+erzeugt" in created.headers["location"]
+
+    files = list((stored.data_dir / "offers").glob("ENTWURF-ted-1-*"))
+    assert {path.suffix for path in files} == {".md", ".xlsx"}
+
+    markdown = client.get("/tender/ted:1/draft.md")
+    assert markdown.status_code == 200
+    assert "ENTWURF" in markdown.text
+    # Der Entwurf nennt sich selbst so - und ist kein Angebot.
+    assert "Monitoren" in markdown.text
+
+
+def test_draft_without_approval_is_refused_by_the_service(client: TestClient, stored: Settings):
+    _with_calculation(stored)
+    token = _csrf(client)
+    response = client.post(
+        "/tender/ted:1/draft", data={"csrf_token": token}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert "Freigabe" in response.headers["location"]
+    # Es entsteht auch keine Datei, die spaeter jemand fuer ein Angebot haelt.
+    offers = stored.data_dir / "offers"
+    assert not offers.is_dir() or not list(offers.glob("*"))
+
+
+def test_draft_needs_a_csrf_token(client: TestClient, stored: Settings):
+    _with_calculation(stored)
+    token = _csrf(client)
+    client.post(
+        "/tender/ted:1/decide",
+        data={"kind": "APPROVED", "decided_by": "Justin", "csrf_token": token},
+    )
+    response = client.post("/tender/ted:1/draft", data={"csrf_token": "geraten"})
+    assert response.status_code == 400
+
+
+def test_draft_view_without_a_file_says_so(client: TestClient):
+    response = client.get("/tender/ted:1/draft.md", follow_redirects=False)
+    assert response.status_code == 303
+    assert "Noch+kein+Entwurf" in response.headers["location"]
+
+
+# --- Suche und Filter ---------------------------------------------------------
+def test_search_narrows_the_overview(client: TestClient, stored: Settings):
+    with session_scope(stored.database_url) as session:
+        TenderRepository(session, stored.dedup).upsert(
+            tender(id="ted:2", source_id="2", title="Wartung von Aufzugsanlagen")
+        )
+        session.commit()
+
+    alle = client.get("/").text
+    assert "Monitoren" in alle and "Aufzugsanlagen" in alle
+
+    treffer = client.get("/?q=aufzug").text
+    assert "Aufzugsanlagen" in treffer
+    assert "Lieferung von 2.000 Monitoren" not in treffer
+
+    leer = client.get("/?q=gibtesnicht").text
+    assert "Nichts gefunden" in leer
+
+
+def test_filter_todo_shows_what_waits_for_a_decision(client: TestClient, stored: Settings):
+    # Ohne Kalkulation wartet nichts auf eine Entscheidung.
+    assert "Nichts gefunden" in client.get("/?filter=todo").text
+
+    _with_calculation(stored)
+    assert "Monitoren" in client.get("/?filter=todo").text
+
+    token = _csrf(client)
+    client.post(
+        "/tender/ted:1/decide",
+        data={"kind": "REJECTED", "decided_by": "Justin", "csrf_token": token},
+    )
+    assert "Nichts gefunden" in client.get("/?filter=todo").text
+    assert "Monitoren" in client.get("/?filter=decided").text

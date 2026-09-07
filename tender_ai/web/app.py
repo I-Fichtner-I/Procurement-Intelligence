@@ -11,6 +11,8 @@ Die Schutzregeln stehen in ``security.py`` und gelten fuer jede Anfrage.
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form, Request
@@ -23,7 +25,14 @@ from ..core.logging import get_logger
 from ..database.repository import TenderRepository
 from ..database.session import session_scope
 from ..models.decision import DecisionKind
-from ..services.approval import approval_state, pipeline_status, record_decision
+from ..offer.draft import draft_name_prefix
+from ..services.approval import (
+    PipelineRow,
+    approval_state,
+    create_offer_draft,
+    pipeline_status,
+    record_decision,
+)
 from . import render
 from .security import (
     CSRF_COOKIE,
@@ -118,12 +127,15 @@ def _register_routes(app: FastAPI, settings: Settings) -> None:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    async def overview(request: Request, all: bool = False) -> HTMLResponse:
+    async def overview(
+        request: Request, all: bool = False, q: str = "", filter: str = ""
+    ) -> HTMLResponse:
         rows = pipeline_status(settings, limit=200, open_only=not all)
+        rows = _filtered(rows, query=q, active=filter)
         return HTMLResponse(
             render.page(
                 settings.web.title,
-                render.overview(rows, open_only=not all),
+                render.overview(rows, open_only=not all, query=q, active_filter=filter),
                 subtitle=f"v{__version__}",
             )
         )
@@ -197,6 +209,94 @@ def _register_routes(app: FastAPI, settings: Settings) -> None:
             f"/tender/{tender_id}?msg=Entscheidung+protokolliert", status_code=303
         )
 
+    @app.post("/tender/{tender_id}/draft")
+    async def draft(
+        request: Request,
+        tender_id: str,
+        csrf_token: str = Form(..., alias=CSRF_FIELD),
+    ) -> Response:
+        """Angebotsentwurf erzeugen - die Sperre der Stufe 6 gilt unveraendert.
+
+        Ohne Freigabe entsteht kein Entwurf, auch nicht "nur zur Ansicht"; der
+        Dienst wirft dann ``ConfigError``, und die Meldung landet in der Ansicht.
+        """
+        if not tokens_match(request.cookies.get(CSRF_COOKIE), csrf_token):
+            log.warning("web_csrf_rejected", tender=tender_id, action="draft")
+            return HTMLResponse(
+                render.page(
+                    settings.web.title,
+                    '<h2>Abgelehnt</h2><p class="lede">Das Formular war nicht mehr gueltig. '
+                    "Bitte die Seite neu laden.</p>",
+                ),
+                status_code=400,
+            )
+
+        try:
+            result = await asyncio.to_thread(create_offer_draft, settings, tender_id)
+        except ConfigError as exc:
+            return RedirectResponse(f"/tender/{tender_id}?msg={exc}", status_code=303)
+
+        log.info("web_draft_created", tender=tender_id, files=len(result.files))
+        return RedirectResponse(
+            f"/tender/{tender_id}?msg=Entwurf+erzeugt%3A+"
+            f"{len(result.files)}+Datei(en)+in+data/offers",
+            status_code=303,
+        )
+
+    @app.get("/tender/{tender_id}/draft.md")
+    async def draft_markdown(request: Request, tender_id: str) -> Response:
+        """Die zuletzt erzeugte Markdown-Fassung im Browser lesen."""
+        path = _latest_draft(settings, tender_id)
+        if path is None:
+            return RedirectResponse(
+                f"/tender/{tender_id}?msg=Noch+kein+Entwurf+vorhanden", status_code=303
+            )
+        return Response(
+            path.read_text(encoding="utf-8"),
+            media_type="text/plain; charset=utf-8",
+        )
+
+
+def _filtered(rows: list[PipelineRow], *, query: str, active: str) -> list[PipelineRow]:
+    """Suche und Filter auf der fertigen Uebersicht.
+
+    Bewusst hier und nicht in der Abfrage: die Liste ist auf 200 Zeilen
+    begrenzt, und ``PipelineRow`` traegt bereits alles, wonach gesucht wird.
+    """
+    needle = query.strip().lower()
+    if needle:
+        rows = [row for row in rows if needle in (row.title or "").lower()]
+    if active == "todo":
+        # Wartet auf einen Menschen: kalkuliert, aber noch nicht entschieden -
+        # oder die Freigabe deckt die neuen Zahlen nicht mehr.
+        pending_kind = str(DecisionKind.PENDING)
+        rows = [
+            row
+            for row in rows
+            if row.is_stale or (row.stages["kalkuliert"] and row.decision == pending_kind)
+        ]
+    elif active == "decided":
+        rows = [row for row in rows if row.decision != str(DecisionKind.PENDING)]
+    return rows
+
+
+def _latest_draft(settings: Settings, tender_id: str) -> Path | None:
+    """Neueste Markdown-Fassung eines Entwurfs - oder nichts.
+
+    Der Dateiname entsteht in ``offer.draft`` aus der Tender-ID; hier wird nur
+    gesucht, nie geraten: was nicht existiert, gibt es nicht.
+    """
+    folder = settings.data_dir / "offers"
+    if not folder.is_dir():
+        return None
+    prefix = draft_name_prefix(tender_id)
+    candidates = sorted(
+        (path for path in folder.glob(f"{prefix}*.md") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
 
 def _tender_view(settings: Settings, tender_id: str) -> dict[str, Any] | None:
     """Alles, was die Detailansicht zeigt - in einer Sitzung gelesen."""
@@ -222,4 +322,6 @@ def _tender_view(settings: Settings, tender_id: str) -> dict[str, Any] | None:
     state = approval_state(settings, tender_id)
     view["blockers"] = list(state.blockers)
     view["is_stale"] = state.is_stale
+    view["allows_draft"] = state.allows_draft
+    view["has_draft"] = _latest_draft(settings, tender_id) is not None
     return view

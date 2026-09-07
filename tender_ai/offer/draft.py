@@ -244,7 +244,21 @@ def write_xlsx(draft: OfferDraft, destination: Path) -> Path:
     return destination
 
 
+#: Jeder Entwurf traegt es im Namen - eine Datei, die aussieht wie ein Angebot,
+#: soll sich schon im Dateimanager als Entwurf zu erkennen geben.
+DRAFT_PREFIX = "ENTWURF-"
+
+
+def safe_stem(tender_id: str) -> str:
+    """Tender-ID als Dateinamensteil: nur Buchstaben, Ziffern, Strich, Unterstrich."""
+    return "".join(char if char.isalnum() or char in "-_" else "-" for char in tender_id)
+
+
+def draft_name_prefix(tender_id: str) -> str:
+    """Anfang aller Entwurfsdateien dieser Ausschreibung - zum Wiederfinden."""
+    return f"{DRAFT_PREFIX}{safe_stem(tender_id)}-"
+
+
 def draft_filename(tender_id: str, suffix: str, generated_at: datetime) -> str:
     """Dateiname mit Entwurfskennzeichen und Zeitstempel."""
-    safe = "".join(char if char.isalnum() or char in "-_" else "-" for char in tender_id)
-    return f"ENTWURF-{safe}-{generated_at:%Y%m%d-%H%M}{suffix}"
+    return f"{draft_name_prefix(tender_id)}{generated_at:%Y%m%d-%H%M}{suffix}"
