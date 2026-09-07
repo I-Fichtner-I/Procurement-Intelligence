@@ -366,6 +366,37 @@
 
   td:last-child { color: var(--muted); padding-right: 0; }
 
+  /* --- Bildschirmfotos ---------------------------------------------------- */
+  .shots { margin-top: 2rem; display: flex; flex-direction: column; gap: 2.2rem; }
+
+  figure { margin: 0; }
+
+  figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+  }
+
+  figcaption {
+    margin-top: 0.7rem;
+    color: var(--muted);
+    font-size: 0.88rem;
+    max-width: var(--measure);
+  }
+
+  figcaption b {
+    display: block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+  }
+
   /* --- Fuss -------------------------------------------------------------- */
   footer { padding: 2.5rem 0 3.5rem; color: var(--muted); font-size: 0.88rem; }
 
@@ -402,8 +433,8 @@
           <a class="btn" href="#installation">Installieren</a>
         </div>
         <div class="facts">
-          <span><b>6</b> Stufen</span>
-          <span><b>455</b> Tests</span>
+          <span><b>9</b> Stufen</span>
+          <span><b>511</b> Tests</span>
           <span>Python <b>3.12+</b></span>
           <span>offline testbar</span>
         </div>
@@ -421,9 +452,9 @@
       <div>
         <h2>Ein Befehl fuer die ganze Kette</h2>
         <p class="section-intro">
-          <code>tender-ai pipeline</code> faehrt Recherche, Analyse, Positionen, Preise
-          und Kalkulation in einem Durchgang - im cron-Eintrag eine Zeile statt fuenf.
-          Jede Stufe fasst nur an, was sich seit dem letzten Lauf geaendert hat.
+          <code>tender-ai pipeline</code> faehrt Recherche, Analyse, Positionen, Preise,
+          Kalkulation und Meldung in einem Durchgang - im cron-Eintrag eine Zeile statt
+          sechs. Jede Stufe fasst nur an, was sich seit dem letzten Lauf geaendert hat.
         </p>
 
         <div class="console">
@@ -433,16 +464,20 @@
           </div>
 <pre><span class="cmd">$ tender-ai pipeline --source fixture</span>
 
-                                 Pipeline-Lauf
-┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Stufe       ┃ Verarbeitet ┃ Fehlgeschlagen ┃  Dauer ┃ Hinweis                ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ Recherche   │           2 │              0 │  0.7 s │ new: 2, updated: 0     │
-│ Analyse     │           2 │              0 │ 13.5 s │                        │
-│ Positionen  │           2 │              0 │ 12.0 s │ items: 0               │
-│ Preise      │           0 │              0 │  0.0 s │                        │
-│ Kalkulation │           0 │              0 │  0.0 s │                        │
-└─────────────┴─────────────┴────────────────┴────────┴────────────────────────┘
+                                Pipeline-Lauf
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Stufe       ┃ Verarbeitet ┃ Fehlgeschlagen ┃ Dauer ┃ Hinweis               ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Recherche   │           2 │              0 │ 0.2 s │ new: 2, updated: 0,   │
+│             │             │                │       │ duplicates: 0,        │
+│             │             │                │       │ sources_failed: 0     │
+│ Analyse     │           2 │              0 │ 0.2 s │                       │
+│ Positionen  │           2 │              0 │ 0.0 s │ items: 8              │
+│ Preise      │           2 │              0 │ 0.1 s │                       │
+│ Kalkulation │           2 │              0 │ 0.0 s │                       │
+│ Meldung     │           0 │              0 │ 0.1 s │ gefunden: 4, kanaele: │
+│             │             │                │       │ keiner aktiv          │
+└─────────────┴─────────────┴────────────────┴───────┴───────────────────────┘
 <span class="dim">Naechster Schritt: tender-ai status - die Freigabe bleibt Handarbeit.</span></pre>
         </div>
 
@@ -459,7 +494,7 @@
 <section id="stufen">
   <div class="sheet">
     <div class="row">
-      <div class="margin-note">Stufen 1&ndash;6</div>
+      <div class="margin-note">Stufen 1&ndash;9</div>
       <div>
         <h2>Was in der Kette passiert</h2>
         <p class="section-intro">
@@ -548,7 +583,104 @@
               <code>tender-ai decide &lt;id&gt; --approve · offer &lt;id&gt;</code>
             </div>
           </article>
+
+          <article class="stage">
+            <div class="stage-no">07</div>
+            <div>
+              <h3>In einem Takt fahren</h3>
+              <p>
+                Die Stufen 1 bis 5 und die Meldung als ein Aufruf - fuer den Eintrag
+                in cron oder einen systemd-Timer. Faellt eine Stufe aus, laufen die
+                spaeteren auf dem vorhandenen Bestand weiter.
+              </p>
+              <code>tender-ai pipeline</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">08</div>
+            <div>
+              <h3>Melden, was ansteht</h3>
+              <p>
+                Neu gefunden, geaendert, Frist laeuft ab, Freigabe faellig: als E-Mail
+                oder Webhook. Jede Meldung geht je Kanal genau einmal hinaus - was
+                zugestellt wurde, steht in der Datenbank, nicht im Arbeitsspeicher.
+              </p>
+              <code>tender-ai notify</code>
+            </div>
+          </article>
+
+          <article class="stage">
+            <div class="stage-no">09</div>
+            <div>
+              <h3>Sehen und freigeben</h3>
+              <p>
+                Eine kleine Weboberflaeche fuer den eigenen Rechner: Uebersicht mit
+                Suche und Filter, Detailansicht mit Zahlen und Kriterien, Freigabe mit
+                Namen und Notiz. Ohne Zugangstoken bleibt sie auf <code>127.0.0.1</code>.
+              </p>
+              <code>tender-ai serve</code>
+            </div>
+          </article>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="oberflaeche">
+  <div class="sheet">
+    <div class="row">
+      <div class="margin-note">Oberflaeche</div>
+      <div>
+        <h2>Was auf dem Bildschirm steht</h2>
+        <p class="section-intro">
+          <code>tender-ai serve</code> startet eine Oberflaeche auf dem eigenen Rechner.
+          Sie zeigt den Stand und nimmt die Entscheidung entgegen - recherchiert und
+          gerechnet wird weiter im Takt, damit dieselbe Logik nicht an zwei Orten
+          gepflegt werden muss.
+        </p>
+
+        <div class="shots">
+          <figure>
+            <picture>
+              <source srcset="media/web-uebersicht-dunkel.png" media="(prefers-color-scheme: dark)">
+              <img src="media/web-uebersicht.png" width="1180" height="429"
+                   alt="Uebersicht mit zwei Ausschreibungen: Restfrist, Titel, Haken fuer
+                        Unterlagen, Analyse, Positionen, Preise und Kalkulation, dazu der
+                        Stand der Entscheidung und der naechste Schritt.">
+            </picture>
+            <figcaption>
+              <b>Uebersicht</b>
+              Nach Restfrist sortiert. Ein Haken heisst, dass diese Stufe gelaufen ist;
+              die Spalte rechts nennt den naechsten Schritt. Suchfeld und Filter grenzen
+              auf das ein, was auf einen Menschen wartet.
+            </figcaption>
+          </figure>
+
+          <figure>
+            <picture>
+              <source srcset="media/web-detail-dunkel.png" media="(prefers-color-scheme: dark)">
+              <img src="media/web-detail.png" width="1180" height="1626"
+                   alt="Detailansicht einer Ausschreibung mit Vergabestelle, Frist, Volumen,
+                        Risiko, Kalkulation, Mindestkriterien, protokollierter Freigabe und
+                        den Schaltflaechen fuer den Angebotsentwurf.">
+            </picture>
+            <figcaption>
+              <b>Detailansicht</b>
+              Kalkulation und Mindestkriterien nebeneinander, darunter das Protokoll der
+              Entscheidungen mit Namen und Notiz. Erst nach einer Freigabe erscheint die
+              Schaltflaeche fuer den Angebotsentwurf - und auch dann wird nichts
+              eingereicht.
+            </figcaption>
+          </figure>
+        </div>
+
+        <p class="body-text">
+          Beide Aufnahmen stammen aus einem Lauf gegen die mitgelieferten Demodaten
+          (<code>tender-ai pipeline --source fixture</code>). Die Ausschreibungen darin
+          sind frei erfunden.
+        </p>
       </div>
     </div>
   </div>
@@ -634,9 +766,14 @@ tender-ai init          <span class="comment"># Verzeichnisse und Datenbank anle
 
         <div class="snippet">
           <h3>Ohne Netz ausprobieren</h3>
-<pre>tender-ai search --source fixture   <span class="comment"># Demodaten aus data/fixtures/</span>
-tender-ai list
-tender-ai status</pre>
+<pre>tender-ai pipeline --source fixture  <span class="comment"># Demodaten aus data/fixtures/</span>
+tender-ai status                     <span class="comment"># wo steht was</span>
+tender-ai serve                      <span class="comment"># http://127.0.0.1:8080</span></pre>
+          <p class="body-text">
+            Die Demodaten bringen ein Leistungsverzeichnis mit; der Lauf kommt damit
+            ohne Netz bis zur Kalkulation. Fuer die Preise die Beispielliste in
+            <code>config.yaml</code> aktivieren (<code>price_sources.beispiel_liste</code>).
+          </p>
         </div>
 
         <div class="snippet">
@@ -700,9 +837,10 @@ docker run --rm -v "$PWD/data:/app/data" tender-ai search --source fixture</pre>
       <div class="margin-note">Hinweis</div>
       <div>
         <p>
-          Diese Seite beschreibt die Software. Sie enthaelt keine Ausschreibungsdaten,
-          Preise oder Kalkulationen - die bleiben auf dem Rechner, auf dem das Werkzeug
-          laeuft.
+          Diese Seite beschreibt die Software. Was auf den Bildschirmfotos steht, stammt
+          aus den mitgelieferten Demodaten und ist frei erfunden. Echte Ausschreibungen,
+          Preise und Kalkulationen bleiben auf dem Rechner, auf dem das Werkzeug laeuft -
+          hier steht keine davon.
         </p>
         <p>
           Quellcode, Architekturdokumentation und Optimierungs-Roadmap:

@@ -6,7 +6,7 @@
       "national_id": "VG-2026-0001",
       "title": "Lieferung von 2.000 Monitoren fuer Verwaltungsarbeitsplaetze",
       "contracting_authority": "Musterstadt - Zentrale Vergabestelle",
-      "description": "Beschaffung von 2.000 LED-Monitoren, 27 Zoll, IPS-Panel, hoehenverstellbar, inklusive Lieferung an 12 Standorte.",
+      "description": "Beschaffung von 2.000 LED-Monitoren nebst Halterungen, Dockingstationen und hoehenverstellbaren Tischen, 27 Zoll, IPS-Panel, hoehenverstellbar, inklusive Lieferung an 12 Standorte.",
       "country": "DEU",
       "region": "Bayern",
       "delivery_location": "Musterstadt",
@@ -15,16 +15,22 @@
       "procedure_type": "open",
       "publication_date": "2026-08-25",
       "submission_deadline": "2026-09-15T12:00:00+02:00",
-      "estimated_value": 420000.0,
+      "estimated_value": 700000.0,
       "currency": "EUR",
       "status": "OPEN",
       "source_url": "https://example.invalid/ausschreibungen/demo-2026-0001",
       "documents": [
         {
           "name": "Leistungsverzeichnis",
-          "url": "https://example.invalid/ausschreibungen/demo-2026-0001/lv.pdf",
-          "media_type": "application/pdf",
+          "url": "demo-lv-arbeitsplaetze.csv",
+          "media_type": "text/csv",
           "access": "PUBLIC"
+        },
+        {
+          "name": "Vergabeunterlagen (nur nach Anmeldung)",
+          "url": "https://example.invalid/ausschreibungen/demo-2026-0001/vergabeunterlagen.zip",
+          "media_type": "application/zip",
+          "access": "REGISTRATION"
         }
       ]
     },
@@ -47,6 +53,14 @@
         {"lot_id": "1", "title": "Bueromoebel", "estimated_value": 90000.0, "currency": "EUR"},
         {"lot_id": "2", "title": "Bueromaterial", "estimated_value": 60000.0, "currency": "EUR"},
         {"lot_id": "3", "title": "Ergonomiezubehoer", "estimated_value": 30000.0, "currency": "EUR"}
+      ],
+      "documents": [
+        {
+          "name": "Leistungsverzeichnis Lose 1 bis 3",
+          "url": "demo-lv-bueroausstattung.csv",
+          "media_type": "text/csv",
+          "access": "PUBLIC"
+        }
       ]
     },
     {

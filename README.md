@@ -3,11 +3,12 @@
 Automatisierte Recherche, Analyse und Profitabilitaetsbewertung oeffentlicher
 Ausschreibungen.
 
-Projektseite (Funktionen und Installation auf einen Blick):
+Projektseite (Funktionen, Bildschirmfotos und Installation auf einen Blick):
 **https://i-fichtner-i.github.io/Procurement-Intelligence/** - Quelle:
 [`docs/index.html`](docs/index.html). Sie beschreibt ausschliesslich die
-Software; Ausschreibungsdaten, Preise und Kalkulationen bleiben auf dem
-Rechner, auf dem das Werkzeug laeuft.
+Software; was auf den Bildschirmfotos steht, stammt aus den Demodaten und ist
+frei erfunden. Echte Ausschreibungsdaten, Preise und Kalkulationen bleiben auf
+dem Rechner, auf dem das Werkzeug laeuft.
 
 Das Projekt wird **stufenweise** gebaut: jede Stufe ist einzeln lauffaehig und
 testbar, bevor die naechste beginnt.
@@ -74,11 +75,17 @@ tender-ai init                # Verzeichnisse + Datenbank anlegen
 ### 1. Offline ausprobieren (ohne Netzwerk)
 
 ```bash
-tender-ai search --source fixture          # Demodaten aus data/fixtures/
-tender-ai list
+tender-ai pipeline --source fixture        # Demodaten aus data/fixtures/
+tender-ai status                           # wo steht welche Ausschreibung
 tender-ai show fixture:demo-2026-0001
-tender-ai export data/exports/test.xlsx
+tender-ai serve                            # http://127.0.0.1:8080
 ```
+
+Die Demodaten bringen ein Leistungsverzeichnis als CSV mit, das neben der
+Fixture-Datei liegt und kopiert statt geladen wird. Der Lauf kommt damit ohne
+Netzwerk bis zur Kalkulation. Fuer die Preise die Beispielliste in
+`config.yaml` aktivieren (`price_sources.beispiel_liste.enabled: true`) - sonst
+bleibt es bei Positionen ohne Preisbild.
 
 ### 2. Quellen live pruefen
 
@@ -566,7 +573,7 @@ Quelle, Dublettenerkennung, Aenderungserkennung, Export und die CLI.
 | `ted` | offizielle EU-Such-API (TED) | Endpunkt, Feldliste und Query-Syntax sind in `config.yaml` konfigurierbar, weil TED seine API versioniert. Optionaler API-Key ueber `.env`. |
 | `bund_rss` | RSS | oeffentlicher Ausschreibungs-Feed von service.bund.de; weitere Feeds ohne Codeaenderung ergaenzbar |
 | `evergabe_nrw` | HTML-Trefferliste (`html_list`) | Vergabemarktplatz NRW. **Standardmaessig aus** - erst `tender-ai doctor --source evergabe_nrw` bestaetigt die Selektoren (siehe unten) |
-| `fixture` | lokale JSON-Datei | Demo- und Testquelle, kein Netzwerk |
+| `fixture` | lokale JSON-Datei | Demo- und Testquelle, kein Netzwerk; beiliegende Unterlagen werden kopiert statt geladen |
 
 ### Portale ohne Schnittstelle (`html_list`)
 
