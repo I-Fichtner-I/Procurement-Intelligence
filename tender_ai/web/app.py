@@ -1,0 +1,328 @@
+"""Die Weboberflaeche: sehen, was ansteht - und freigeben (Stufe 9).
+
+Bewusst klein gehalten. Drei Ansichten (Uebersicht, Detail, Anmeldung) und
+zwei schreibende Endpunkte, die beide an einer menschlichen Entscheidung
+haengen: die Entscheidung selbst und der Entwurf, den sie erst erlaubt. Alles
+andere - recherchieren, analysieren, kalkulieren - bleibt beim Takt und der
+Kommandozeile; eine Oberflaeche, die nebenbei Portale abfragt, waere ein
+zweiter Ort, an dem dieselbe Logik gepflegt werden muesste.
+
+Die Schutzregeln stehen in ``security.py`` und gelten fuer jede Anfrage.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+
+from .. import __version__
+from ..config import Settings
+from ..core.errors import ConfigError
+from ..core.logging import get_logger
+from ..database.repository import TenderRepository
+from ..database.session import session_scope
+from ..models.decision import DecisionKind
+from ..offer.draft import draft_name_prefix
+from ..services.approval import (
+    PipelineRow,
+    approval_state,
+    create_offer_draft,
+    pipeline_status,
+    record_decision,
+)
+from . import render
+from .security import (
+    CSRF_COOKIE,
+    CSRF_FIELD,
+    TOKEN_COOKIE,
+    is_loopback,
+    new_csrf_token,
+    token_from_request,
+    tokens_match,
+)
+
+log = get_logger(__name__)
+
+#: Pfade, die ohne Anmeldung erreichbar sein muessen.
+PUBLIC_PATHS = frozenset({"/login", "/health"})
+
+
+def create_app(settings: Settings) -> FastAPI:
+    """Die Anwendung bauen - und den Start verweigern, wenn sie ungeschuetzt offen stuende."""
+    token = settings.web_token.get_secret_value() if settings.web_token else None
+    if not token and not is_loopback(settings.web.host):
+        raise ConfigError(
+            f"web.host ist '{settings.web.host}', also nicht nur der eigene Rechner. "
+            "Dann ist ein Zugangstoken Pflicht: TENDER_AI_WEB_TOKEN setzen (und die "
+            "Oberflaeche hinter TLS betreiben) oder host auf 127.0.0.1 lassen."
+        )
+
+    app = FastAPI(title=settings.web.title, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.settings = settings
+    app.state.token = token
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next: Any) -> Response:
+        """Zugang pruefen und den CSRF-Wert setzen - vor jeder Ansicht."""
+        if request.url.path not in PUBLIC_PATHS:
+            if token:
+                presented = token_from_request(
+                    dict(request.cookies), request.headers.get("Authorization")
+                )
+                if not tokens_match(token, presented):
+                    return RedirectResponse("/login", status_code=303)
+            elif not is_loopback(request.client.host if request.client else None):
+                # Ohne Token bleibt die Oberflaeche auf den eigenen Rechner beschraenkt,
+                # auch wenn jemand einen Reverse Proxy davorstellt.
+                log.warning(
+                    "web_remote_access_denied",
+                    client=getattr(request.client, "host", None),
+                )
+                return HTMLResponse(
+                    render.page(
+                        settings.web.title,
+                        '<h2>Kein Zugriff</h2><p class="lede">Ohne Zugangstoken ist diese '
+                        "Oberflaeche nur auf dem Rechner erreichbar, auf dem sie laeuft.</p>",
+                    ),
+                    status_code=403,
+                )
+
+        csrf = request.cookies.get(CSRF_COOKIE) or new_csrf_token()
+        request.state.csrf_token = csrf
+        response = await call_next(request)
+        if request.cookies.get(CSRF_COOKIE) != csrf:
+            response.set_cookie(CSRF_COOKIE, csrf, httponly=True, samesite="strict", path="/")
+        return response
+
+    _register_routes(app, settings)
+    return app
+
+
+def _register_routes(app: FastAPI, settings: Settings) -> None:
+    @app.get("/health")
+    async def health() -> JSONResponse:
+        with session_scope(settings.database_url) as session:
+            count = TenderRepository(session, settings.dedup).count(only_primary=False)
+        return JSONResponse({"status": "ok", "version": __version__, "tenders": count})
+
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_form(request: Request) -> HTMLResponse:
+        if not app.state.token:
+            return HTMLResponse(status_code=303, content="", headers={"Location": "/"})
+        return HTMLResponse(render.page(settings.web.title, render.login()))
+
+    @app.post("/login")
+    async def login_submit(request: Request, token: str = Form(...)) -> Response:
+        if not tokens_match(app.state.token, token):
+            log.warning("web_login_failed")
+            return HTMLResponse(
+                render.page(settings.web.title, render.login(error="Token stimmt nicht.")),
+                status_code=401,
+            )
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(TOKEN_COOKIE, token, httponly=True, samesite="strict", path="/")
+        return response
+
+    @app.get("/", response_class=HTMLResponse)
+    async def overview(
+        request: Request, all: bool = False, q: str = "", filter: str = ""
+    ) -> HTMLResponse:
+        rows = pipeline_status(settings, limit=200, open_only=not all)
+        rows = _filtered(rows, query=q, active=filter)
+        return HTMLResponse(
+            render.page(
+                settings.web.title,
+                render.overview(rows, open_only=not all, query=q, active_filter=filter),
+                subtitle=f"v{__version__}",
+            )
+        )
+
+    @app.get("/tender/{tender_id}", response_class=HTMLResponse)
+    async def detail(request: Request, tender_id: str, msg: str | None = None) -> HTMLResponse:
+        view = _tender_view(settings, tender_id)
+        if view is None:
+            return HTMLResponse(
+                render.page(
+                    settings.web.title,
+                    f'<h2>Nicht gefunden</h2><p class="lede">{render.esc(tender_id)}</p>',
+                ),
+                status_code=404,
+            )
+        return HTMLResponse(
+            render.page(
+                settings.web.title,
+                render.detail(
+                    csrf_token=request.state.csrf_token,
+                    decided_by=settings.web.decided_by,
+                    message=msg,
+                    **view,
+                ),
+                subtitle=tender_id,
+            )
+        )
+
+    @app.post("/tender/{tender_id}/decide")
+    async def decide(
+        request: Request,
+        tender_id: str,
+        kind: str = Form(...),
+        decided_by: str = Form(...),
+        note: str = Form(""),
+        csrf_token: str = Form(..., alias=CSRF_FIELD),
+    ) -> Response:
+        if not tokens_match(request.cookies.get(CSRF_COOKIE), csrf_token):
+            # Ohne diese Pruefung koennte eine fremde Seite im selben Browser
+            # eine Freigabe ausloesen.
+            log.warning("web_csrf_rejected", tender=tender_id)
+            return HTMLResponse(
+                render.page(
+                    settings.web.title,
+                    '<h2>Abgelehnt</h2><p class="lede">Das Formular war nicht mehr gueltig. '
+                    "Bitte die Seite neu laden und erneut entscheiden.</p>",
+                ),
+                status_code=400,
+            )
+
+        try:
+            decision_kind = DecisionKind(kind)
+        except ValueError:
+            return RedirectResponse(
+                f"/tender/{tender_id}?msg=Unbekannte+Entscheidung", status_code=303
+            )
+
+        try:
+            record_decision(
+                settings,
+                tender_id,
+                decision_kind,
+                decided_by=decided_by.strip() or "unbekannt",
+                note=note.strip() or None,
+            )
+        except ConfigError as exc:
+            return RedirectResponse(f"/tender/{tender_id}?msg={exc}", status_code=303)
+
+        log.info("web_decision", tender=tender_id, kind=str(decision_kind), by=decided_by)
+        return RedirectResponse(
+            f"/tender/{tender_id}?msg=Entscheidung+protokolliert", status_code=303
+        )
+
+    @app.post("/tender/{tender_id}/draft")
+    async def draft(
+        request: Request,
+        tender_id: str,
+        csrf_token: str = Form(..., alias=CSRF_FIELD),
+    ) -> Response:
+        """Angebotsentwurf erzeugen - die Sperre der Stufe 6 gilt unveraendert.
+
+        Ohne Freigabe entsteht kein Entwurf, auch nicht "nur zur Ansicht"; der
+        Dienst wirft dann ``ConfigError``, und die Meldung landet in der Ansicht.
+        """
+        if not tokens_match(request.cookies.get(CSRF_COOKIE), csrf_token):
+            log.warning("web_csrf_rejected", tender=tender_id, action="draft")
+            return HTMLResponse(
+                render.page(
+                    settings.web.title,
+                    '<h2>Abgelehnt</h2><p class="lede">Das Formular war nicht mehr gueltig. '
+                    "Bitte die Seite neu laden.</p>",
+                ),
+                status_code=400,
+            )
+
+        try:
+            result = await asyncio.to_thread(create_offer_draft, settings, tender_id)
+        except ConfigError as exc:
+            return RedirectResponse(f"/tender/{tender_id}?msg={exc}", status_code=303)
+
+        log.info("web_draft_created", tender=tender_id, files=len(result.files))
+        return RedirectResponse(
+            f"/tender/{tender_id}?msg=Entwurf+erzeugt%3A+"
+            f"{len(result.files)}+Datei(en)+in+data/offers",
+            status_code=303,
+        )
+
+    @app.get("/tender/{tender_id}/draft.md")
+    async def draft_markdown(request: Request, tender_id: str) -> Response:
+        """Die zuletzt erzeugte Markdown-Fassung im Browser lesen."""
+        path = _latest_draft(settings, tender_id)
+        if path is None:
+            return RedirectResponse(
+                f"/tender/{tender_id}?msg=Noch+kein+Entwurf+vorhanden", status_code=303
+            )
+        return Response(
+            path.read_text(encoding="utf-8"),
+            media_type="text/plain; charset=utf-8",
+        )
+
+
+def _filtered(rows: list[PipelineRow], *, query: str, active: str) -> list[PipelineRow]:
+    """Suche und Filter auf der fertigen Uebersicht.
+
+    Bewusst hier und nicht in der Abfrage: die Liste ist auf 200 Zeilen
+    begrenzt, und ``PipelineRow`` traegt bereits alles, wonach gesucht wird.
+    """
+    needle = query.strip().lower()
+    if needle:
+        rows = [row for row in rows if needle in (row.title or "").lower()]
+    if active == "todo":
+        # Wartet auf einen Menschen: kalkuliert, aber noch nicht entschieden -
+        # oder die Freigabe deckt die neuen Zahlen nicht mehr.
+        pending_kind = str(DecisionKind.PENDING)
+        rows = [
+            row
+            for row in rows
+            if row.is_stale or (row.stages["kalkuliert"] and row.decision == pending_kind)
+        ]
+    elif active == "decided":
+        rows = [row for row in rows if row.decision != str(DecisionKind.PENDING)]
+    return rows
+
+
+def _latest_draft(settings: Settings, tender_id: str) -> Path | None:
+    """Neueste Markdown-Fassung eines Entwurfs - oder nichts.
+
+    Der Dateiname entsteht in ``offer.draft`` aus der Tender-ID; hier wird nur
+    gesucht, nie geraten: was nicht existiert, gibt es nicht.
+    """
+    folder = settings.data_dir / "offers"
+    if not folder.is_dir():
+        return None
+    prefix = draft_name_prefix(tender_id)
+    candidates = sorted(
+        (path for path in folder.glob(f"{prefix}*.md") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _tender_view(settings: Settings, tender_id: str) -> dict[str, Any] | None:
+    """Alles, was die Detailansicht zeigt - in einer Sitzung gelesen."""
+    with session_scope(settings.database_url) as session:
+        repository = TenderRepository(session, settings.dedup)
+        record = repository.get(tender_id)
+        if record is None:
+            return None
+
+        calculation = record.calculation
+        view: dict[str, Any] = {
+            "tender": TenderRepository.to_tender(record, with_raw=False),
+            "record": record,
+            "risk": record.risk_analysis,
+            "items_count": len(record.items),
+            "pricing": record.price_research,
+            "calculation": calculation,
+            "criteria": list(calculation.criteria or []) if calculation else [],
+            "decisions": repository.decisions_for(record.id, limit=10),
+            "changes": repository.changes_for(record.id, limit=15),
+        }
+
+    state = approval_state(settings, tender_id)
+    view["blockers"] = list(state.blockers)
+    view["is_stale"] = state.is_stale
+    view["allows_draft"] = state.allows_draft
+    view["has_draft"] = _latest_draft(settings, tender_id) is not None
+    return view

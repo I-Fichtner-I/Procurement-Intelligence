@@ -300,3 +300,10 @@ def test_notify_json_reports_the_events(settings: Settings):
         "deadline",
         "decision",
     }
+
+
+def test_serve_refuses_to_open_up_without_a_token(settings: Settings):
+    """Die Oberflaeche geht nicht ungeschuetzt ins Netz - auch nicht per Flag."""
+    result = runner.invoke(app, _args(settings, "serve", "--host", "0.0.0.0"))
+    assert result.exit_code == 1
+    assert "Zugangstoken" in result.output

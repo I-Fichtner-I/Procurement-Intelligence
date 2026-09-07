@@ -54,6 +54,9 @@ testbar, bevor die naechste beginnt.
 > **Stufe 8: `tender-ai notify`** meldet, was neu, geaendert oder fristnah ist
 > und wo eine Entscheidung aussteht - per Mail oder Webhook, je Meldung genau
 > einmal.
+>
+> **Stufe 9: `tender-ai serve`** zeigt denselben Stand im Browser und nimmt die
+> Freigabe per Knopf entgegen - lokal, mit CSRF-Schutz und Namensprotokoll.
 
 ---
 
@@ -343,6 +346,7 @@ tender-ai runs                              # Laufprotokoll + Quellenstatus
 | `tender-ai calculate --all [-n N]` | priorisierte Vorlage ueber alle Ausschreibungen |
 | `tender-ai pipeline [--stage ...] [--force]` | ganze Kette in einem Takt: Recherche bis Meldung |
 | `tender-ai notify [--dry-run] [--channel ...]` | neue, geaenderte, fristnahe Ausschreibungen melden (Stufe 8) |
+| `tender-ai serve [--host] [--port]` | Weboberflaeche: Uebersicht, Details, Freigabe (Stufe 9) |
 | `tender-ai status [--all]` | Pipeline-Uebersicht mit naechstem Schritt (Stufe 6) |
 | `tender-ai decide <id> [--approve\|--reject\|--hold]` | Freigabe entscheiden und protokollieren |
 | `tender-ai offer <id> [--out DIR]` | Angebotsentwurf erzeugen (nur nach Freigabe) |
@@ -477,6 +481,36 @@ mit einem Fehler endet - oder wenn der Prozess ihn gar nicht mehr schliessen
 konnte (Absturz, Kill): so ein verwaister Lauf wird beim naechsten Start
 anhand seines Alters erkannt und geschlossen.
 
+### Weboberflaeche (Stufe 9)
+
+Wer nicht im Terminal arbeiten will, bekommt denselben Stand im Browser:
+
+```bash
+pip install -e ".[web]"     # FastAPI und uvicorn sind bewusst optional
+tender-ai serve             # http://127.0.0.1:8080
+```
+
+Sie zeigt die Uebersicht (nach Frist sortiert, mit Haken je erledigter Stufe),
+die Detailansicht einer Ausschreibung (Stammdaten, Risiko, Kalkulation,
+Mindestkriterien, Aenderungshistorie) - und nimmt **die eine schreibende
+Handlung** entgegen, die es gibt: die Entscheidung eines Menschen.
+
+Der Schutz kommt mit dem ersten Endpunkt, nicht danach:
+
+- **Ohne Zugangstoken nur lokal.** Der Standard bindet auf `127.0.0.1`, und
+  entfernte Anfragen werden auch dann abgewiesen, wenn jemand einen Reverse
+  Proxy davorstellt. Ein weiter geoeffneter Host (`--host 0.0.0.0`) ohne
+  `TENDER_AI_WEB_TOKEN` **verweigert den Start** statt still offen zu stehen.
+- **CSRF-Schutz beim Freigeben.** Das Formular traegt ein Einmal-Token, das
+  zum Cookie passen muss - sonst koennte eine fremde Seite im selben Browser
+  eine Freigabe ausloesen.
+- **Wer entschieden hat, ist Pflichtfeld** und steht im Protokoll (`decisions`),
+  wie bei `tender-ai decide`.
+
+Der Token schuetzt den Zugang, nicht die Leitung: fuer den Betrieb ueber ein
+Netz gehoert TLS davor (Reverse Proxy). Die Oberflaeche recherchiert nichts und
+rechnet nichts - das bleibt beim Takt; sie gibt auch kein Angebot ab.
+
 ### Im Container
 
 ```bash
@@ -494,7 +528,8 @@ kommt aus den Paketmetadaten: `tender-ai --version`.
 ## Abhaengigkeiten und CI
 
 `pyproject.toml` ist die einzige Quelle der Abhaengigkeiten (mit
-Major-Obergrenzen). Die Lockdatei `uv.lock` und die daraus exportierten
+Major-Obergrenzen). Die Weboberflaeche liegt im Extra `web` - der cron-Betrieb
+braucht keinen Webserver. Die Lockdatei `uv.lock` und die daraus exportierten
 `requirements.txt` / `requirements-dev.txt` werden **nicht von Hand** gepflegt:
 
 ```bash
@@ -624,6 +659,7 @@ tender_ai/
 ├── calculation/           Kosten, Szenarien, Mindestkriterien, Urteil
 ├── offer/                 Angebotsentwurf (Markdown, XLSX) - nie eine Abgabe
 ├── notify/                Meldungen: Ereignisse, Darstellung, Kanaele (Mail, Webhook)
+├── web/                   Weboberflaeche: Ansichten, Freigabe, Zugang und CSRF
 ├── pipeline/              ingest.py (Lauforchestrierung), dedup.py
 ├── database/              SQLAlchemy-Modelle, Session, Repository, Alembic-Migrationen
 └── export/                JSON / CSV / XLSX

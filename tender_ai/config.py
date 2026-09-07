@@ -463,6 +463,26 @@ class NotificationConfig(BaseModel):
     webhook: WebhookChannelConfig = Field(default_factory=WebhookChannelConfig)
 
 
+class WebConfig(BaseModel):
+    """Lokale Weboberflaeche (Stufe 9).
+
+    Der Default bindet auf 127.0.0.1: die Oberflaeche zeigt Einkaufspreise,
+    Margen und Entscheidungen und gehoert nicht ungeschuetzt ins Netz. Wer sie
+    weiter oeffnet, braucht einen Zugangstoken (``TENDER_AI_WEB_TOKEN``) -
+    ohne ihn verweigert der Start.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = "127.0.0.1"
+    port: int = 8080
+    #: Vorbelegung des Namensfeldes bei einer Freigabe - wer entschieden hat,
+    #: steht im Protokoll und wird nicht geraten.
+    decided_by: str = ""
+    #: Titel in der Kopfzeile, falls mehrere Instanzen laufen.
+    title: str = "tender-ai"
+
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "console"
@@ -514,6 +534,7 @@ class Settings(BaseSettings):
     criteria: CriteriaConfig = Field(default_factory=CriteriaConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # --- Secrets (nur aus Umgebung/.env, nie aus config.yaml) ---
@@ -528,6 +549,9 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     #: Wird als "Authorization: Bearer <token>" an den Webhook geschickt.
     webhook_token: SecretStr | None = None
+    #: Zugang zur Weboberflaeche (TENDER_AI_WEB_TOKEN). Pflicht, sobald sie
+    #: nicht nur auf dem eigenen Rechner erreichbar ist.
+    web_token: SecretStr | None = None
 
     @field_validator("sources", mode="before")
     @classmethod

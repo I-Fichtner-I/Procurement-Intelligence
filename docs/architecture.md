@@ -322,7 +322,17 @@ Quellen wird robots.txt geprueft.
    protokolliert erst nach erfolgreicher Zustellung - eine verpasste Frist
    waere teurer als eine doppelte Meldung. Melden ist kein Entscheiden: die
    Meldung sagt, dass jemand entscheiden sollte, und benennt den Befehl dafuer.
-6. **KI-Einsatz**: bewusst noch nicht - in Stufe 1 gibt es keine Aufgabe, die
+6. **Weboberflaeche und Auth**: seit Stufe 9 vorhanden (`tender-ai serve`).
+   Das Review (F-30) verlangte Auth, CSRF und Audit-Trail *mit* dem ersten
+   schreibenden Endpunkt - genau so ist es gebaut: ohne Zugangstoken bindet
+   die Oberflaeche nur auf 127.0.0.1 und weist entfernte Anfragen ab; ein
+   weiter geoeffneter Host ohne `TENDER_AI_WEB_TOKEN` verweigert den Start;
+   die Freigabe braucht ein CSRF-Token aus dem Formular; und wer entschieden
+   hat, steht als Pflichtfeld im Protokoll (`decisions`). Der Token schuetzt
+   die Uebertragung nicht - fuer den Netzbetrieb gehoert TLS davor, das sagt
+   auch das README. Geschrieben wird ausschliesslich die Entscheidung eines
+   Menschen; Recherche und Kalkulation bleiben beim Takt.
+7. **KI-Einsatz**: bewusst noch nicht - in Stufe 1 gibt es keine Aufgabe, die
    Regeln nicht besser loesen. Ab Stufe 2 (Dokumentenanalyse, Tabellen,
    Produkt-Matching) mit verpflichtender Confidence und Rueckverweis auf
    Dokument, Seite und Originaltext.

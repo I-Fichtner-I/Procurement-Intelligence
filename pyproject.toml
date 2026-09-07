@@ -32,6 +32,14 @@ dependencies = [
 
 [project.optional-dependencies]
 excel = ["openpyxl>=3.1,<4"]  # bereits in dependencies; Extra bleibt fuer Kompatibilitaet
+# Stufe 9: lokale Weboberflaeche. Bewusst optional - wer nur die CLI und den
+# cron-Lauf braucht, installiert keinen Webserver mit.
+web = [
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.29,<1",
+    # Formulare (Freigabe, Anmeldung) - FastAPI verlangt es fuer Form-Felder.
+    "python-multipart>=0.0.9,<1",
+]
 dev = [
     "pytest>=8.0,<10",
     "pytest-asyncio>=0.23,<2",
@@ -45,6 +53,10 @@ dev = [
     "types-PyYAML",
     # erzeugt Beispiel-PDFs fuer die Extraktionstests
     "fpdf2>=2.7,<3",
+    # Stufe 9 wird mitgetestet, deshalb im Entwicklungsstand enthalten.
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.29,<1",
+    "python-multipart>=0.0.9,<1",
 ]
 
 [project.scripts]
