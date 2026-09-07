@@ -1,7 +1,8 @@
 """Die Weboberflaeche: sehen, was ansteht - und freigeben (Stufe 9).
 
 Bewusst klein gehalten. Drei Ansichten (Uebersicht, Detail, Anmeldung) und
-genau **ein** schreibender Endpunkt: die Entscheidung eines Menschen. Alles
+zwei schreibende Endpunkte, die beide an einer menschlichen Entscheidung
+haengen: die Entscheidung selbst und der Entwurf, den sie erst erlaubt. Alles
 andere - recherchieren, analysieren, kalkulieren - bleibt beim Takt und der
 Kommandozeile; eine Oberflaeche, die nebenbei Portale abfragt, waere ein
 zweiter Ort, an dem dieselbe Logik gepflegt werden muesste.
