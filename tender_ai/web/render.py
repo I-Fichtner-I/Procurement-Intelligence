@@ -296,7 +296,7 @@ def detail(
                 (
                     "Preisbild",
                     pending(
-                        f"{pricing.priced_items}/{pricing.item_count} bepreist"
+                        f"{pricing.usable_count}/{pricing.item_count} kalkulierbar"
                         if pricing
                         else None,
                         hint="noch nicht recherchiert",

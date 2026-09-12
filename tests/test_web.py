@@ -418,3 +418,28 @@ def test_filter_todo_shows_what_waits_for_a_decision(client: TestClient, stored:
     )
     assert "Nichts gefunden" in client.get("/?filter=todo").text
     assert "Monitoren" in client.get("/?filter=decided").text
+
+
+def test_price_research_is_shown_in_the_detail_view(client: TestClient, stored: Settings):
+    """Stufe 4 hinterlaesst einen Datensatz - die Detailansicht muss ihn lesen koennen.
+
+    Die Ansicht hat einmal ein Feld angesprochen, das es am Datensatz nie gab;
+    aufgefallen ist das erst an einer echten Ausschreibung mit Preisbild.
+    """
+    from tender_ai.database.models import PriceResearchRecord
+
+    with session_scope(stored.database_url) as session:
+        session.add(
+            PriceResearchRecord(
+                tender_id="ted:1",
+                item_count=4,
+                usable_count=3,
+                coverage_percent=75,
+                sources_used=["beispiel_liste"],
+            )
+        )
+        session.commit()
+
+    response = client.get("/tender/ted:1")
+    assert response.status_code == 200
+    assert "3/4 kalkulierbar" in response.text
