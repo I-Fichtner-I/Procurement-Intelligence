@@ -288,6 +288,9 @@ class CatalogPriceSourceConfig(PriceSourceConfig):
     encoding: str = "utf-8"
     #: Arbeitsblatt bei XLSX; leer = erstes Blatt.
     sheet: str | None = None
+    #: Spaltenzuordnung. Angegebene Namen ueberschreiben die Vorgaben, der Rest
+    #: bleibt stehen - so, wie es in ``config.yaml`` versprochen ist. Ein leerer
+    #: Wert hebt eine Zuordnung auf.
     columns: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_CATALOG_COLUMNS))
     default_currency: str = "EUR"
     #: Ausdrueckliche Ansage, ob die Liste netto oder brutto ist. Ohne sie
@@ -298,6 +301,18 @@ class CatalogPriceSourceConfig(PriceSourceConfig):
     #: Ab welcher Namensaehnlichkeit eine Zeile als Kandidat gilt. Die
     #: eigentliche Bewertung macht danach das begruendete Matching.
     minimum_similarity: float = 0.34
+
+    @field_validator("columns", mode="after")
+    @classmethod
+    def _merge_with_defaults(cls, value: dict[str, str]) -> dict[str, str]:
+        """Genannte Spalten ergaenzen die Vorgaben, statt sie zu ersetzen.
+
+        Die Kommentare in ``config.yaml`` sagen seit jeher "nur abweichende
+        Spalten muessen genannt werden". Ohne diese Zusammenfuehrung stimmte
+        das nicht: wer eine einzige Spalte umbenannte, verlor alle uebrigen -
+        und merkte es erst daran, dass die Kalkulation ohne Preise blieb.
+        """
+        return {**DEFAULT_CATALOG_COLUMNS, **value}
 
     @field_validator("default_basis")
     @classmethod

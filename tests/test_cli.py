@@ -67,6 +67,35 @@ def test_doctor_reports_failing_source(settings: Settings):
     assert statuses["fixture"]["ok"] is True
     assert statuses["ted"]["ok"] is False
     assert result.exit_code == 1  # mindestens eine Quelle defekt
+    assert {entry["kind"] for entry in statuses.values()} == {"tender"}
+
+
+def test_doctor_also_checks_price_sources(settings: Settings, tmp_path: Path):
+    """Eine Preisliste, die nichts hergibt, soll der Befehl melden - nicht die Kalkulation."""
+    import yaml
+
+    from tender_ai.config import load_settings
+
+    good = tmp_path / "gut.csv"
+    good.write_text("Bezeichnung;Preis;Preisbasis\nMonitor;189,00;netto\n", encoding="utf-8")
+    config = yaml.safe_load(settings.config_file.read_text(encoding="utf-8"))
+    config["price_sources"] = {
+        "gut": {"type": "catalog", "path": str(good)},
+        "leer": {"type": "catalog", "path": str(tmp_path / "fehlt.csv")},
+    }
+    settings.config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+    configured = load_settings(settings.config_file)
+
+    result = runner.invoke(app, _args(configured, "doctor", "--source", "gut", "--json"))
+    payload = {entry["name"]: entry for entry in json.loads(result.stdout)}
+    assert payload["gut"]["ok"] is True
+    assert payload["gut"]["kind"] == "price"
+    assert result.exit_code == 0
+
+    result = runner.invoke(app, _args(configured, "doctor", "--source", "leer", "--json"))
+    payload = {entry["name"]: entry for entry in json.loads(result.stdout)}
+    assert payload["leer"]["ok"] is False
+    assert result.exit_code == 1
 
 
 def test_show_and_export(settings: Settings, tmp_path: Path):

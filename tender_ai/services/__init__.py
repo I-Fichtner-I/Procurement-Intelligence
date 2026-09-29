@@ -21,7 +21,7 @@ from .calculation import (
     calculate_tender,
 )
 from .documents import DocumentReport, DocumentResult, documents_from_db, fetch_documents
-from .health import check_sources
+from .health import check_price_sources, check_sources
 from .items import BatchItemReport, extract_items_for_open_tenders, extract_tender_items
 from .notify import (
     ChannelResult,
@@ -64,6 +64,7 @@ __all__ = [
     "calculate_open_tenders",
     "calculate_tender",
     "approval_state",
+    "check_price_sources",
     "check_sources",
     "create_offer_draft",
     "documents_from_db",
