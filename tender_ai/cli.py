@@ -46,6 +46,7 @@ from .services import (
     approval_state,
     calculate_open_tenders,
     calculate_tender,
+    check_price_sources,
     check_sources,
     create_offer_draft,
     extract_items_for_open_tenders,
@@ -268,20 +269,36 @@ def doctor(
     source: list[str] | None = typer.Option(None, "--source", "-s", help="nur diese Quelle(n)"),
     json_output: bool = typer.Option(False, "--json", help="Ergebnis als JSON ausgeben"),
 ) -> None:
-    """Erreichbarkeit und Parsing der Quellen pruefen (Probeabruf)."""
+    """Erreichbarkeit und Parsing der Quellen pruefen (Probeabruf).
+
+    Geprueft werden Ausschreibungs- *und* Preisquellen. Eine Preisliste mit
+    falschem Pfad oder nicht erkannten Spalten faellt sonst erst auf, wenn die
+    Kalkulation stumm leer bleibt.
+    """
     settings = _settings(config)
-    results = [status.as_dict() for status in asyncio.run(check_sources(settings, source))]
+    tenders = [status.as_dict() for status in asyncio.run(check_sources(settings, source))]
+    prices = [status.as_dict() for status in asyncio.run(check_price_sources(settings, source))]
+    results = tenders + prices
 
     if json_output:
         console.print_json(jsonlib.dumps(results, ensure_ascii=False))
-        raise typer.Exit(0 if all(r["ok"] for r in results) else 1)
+        raise typer.Exit(0 if results and all(r["ok"] for r in results) else 1)
 
     if not results:
         console.print("[yellow]Keine Quellen konfiguriert oder ausgewaehlt.[/yellow]")
         raise typer.Exit(1)
 
-    table = Table(title="Quellen-Health-Check", header_style="bold")
-    table.add_column("Quelle", style="cyan")
+    if tenders:
+        console.print(_health_table("Quellen-Health-Check", "Quelle", tenders))
+    if prices:
+        console.print(_health_table("Preisquellen-Health-Check", "Preisquelle", prices))
+    raise typer.Exit(0 if all(r["ok"] for r in results) else 1)
+
+
+def _health_table(title: str, first_column: str, results: list[dict[str, Any]]) -> Table:
+    """Eine Health-Tabelle - fuer beide Quellenarten dieselbe Form."""
+    table = Table(title=title, header_style="bold")
+    table.add_column(first_column, style="cyan")
     table.add_column("Typ")
     table.add_column("Status")
     table.add_column("Meldung", overflow="fold", max_width=70)
@@ -294,8 +311,7 @@ def doctor(
             escape(str(result["message"])),
             str(result["duration_seconds"]),
         )
-    console.print(table)
-    raise typer.Exit(0 if all(r["ok"] for r in results) else 1)
+    return table
 
 
 @app.command()

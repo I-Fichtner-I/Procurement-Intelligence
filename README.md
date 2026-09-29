@@ -90,12 +90,22 @@ bleibt es bei Positionen ohne Preisbild.
 ### 2. Quellen live pruefen
 
 ```bash
-tender-ai doctor
+tender-ai doctor                        # Ausschreibungs- und Preisquellen
+tender-ai doctor --source beispiel_liste
 ```
 
-Zeigt je Quelle, ob der Endpunkt erreichbar ist und die Antwort geparst werden
-kann. **Damit zuerst testen** - der Befehl sagt genau, welche Quelle klemmt und
-warum.
+Zeigt je Ausschreibungsquelle, ob der Endpunkt erreichbar ist und die Antwort
+geparst werden kann - und je Preisquelle, wie viele Zeilen ankommen und wie
+viele davon kalkulationsfaehig sind. **Damit zuerst testen** - der Befehl sagt
+genau, welche Quelle klemmt und warum. Geprueft werden auch abgeschaltete
+Quellen: wer eine Liste einrichtet, will wissen, ob sie taugt, bevor er sie
+scharf schaltet.
+
+Fuer eine Preisliste nennt der Bericht den wahrscheinlichen Grund beim Namen -
+eine Spalte, die es in der Datei nicht gibt (mitsamt den vorhandenen
+Ueberschriften), eine Spalte ohne lesbare Werte, oder eine fehlende
+Netto/Brutto-Angabe. Der Exit-Code ist 1, sobald eine Quelle nicht in Ordnung
+ist; damit taugt der Befehl auch fuer cron.
 
 ### 3. Vergabeunterlagen auslesen (Stufe 2)
 
@@ -190,7 +200,9 @@ Preisquellen stehen in `config.yaml` unter `price_sources`. Bevorzugt werden
 Preis, zu dem tatsaechlich beschafft wird - ein Schaufensterpreis ist es nicht.
 Spaltenzuordnung, Waehrung und Netto/Brutto-Vorgabe sind konfigurierbar;
 `tender-ai doctor` liest die Liste einmal und meldet, wie viele Zeilen
-kalkulationsfaehig sind.
+kalkulationsfaehig sind. Bei `columns` muessen nur die abweichenden Spalten
+genannt werden - genannte Namen ueberschreiben die Vorgaben, alle uebrigen
+bleiben stehen. Ein leerer Wert (`tiers: ""`) hebt eine Zuordnung auf.
 
 Drei Regeln, die verhindern, dass eine Kalkulation still falsch wird:
 
@@ -338,7 +350,7 @@ tender-ai runs                              # Laufprotokoll + Quellenstatus
 | `tender-ai init` | Verzeichnisse anlegen, Datenbankschema per Migration erzeugen |
 | `tender-ai db-upgrade` | Datenbankschema auf den aktuellen Stand bringen |
 | `tender-ai sources` | konfigurierte Quellen anzeigen |
-| `tender-ai doctor [--source X] [--json]` | Erreichbarkeit und Parsing pruefen |
+| `tender-ai doctor [--source X] [--json]` | Ausschreibungs- und Preisquellen pruefen |
 | `tender-ai search [...]` | recherchieren (siehe `--help`) |
 | `tender-ai list [--open] [--search TEXT]` | gespeicherte Ausschreibungen |
 | `tender-ai show <id>` | Details, Dokumente, Dubletten, Aenderungen |

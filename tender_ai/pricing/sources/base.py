@@ -51,21 +51,27 @@ class ProductQuery:
 class PriceSourceStatus:
     """Ergebnis eines Health-Checks - Basis fuer ``tender-ai doctor``."""
 
+    #: Unterscheidet die beiden Arten von Quellen in einer gemeinsamen Ausgabe.
+    kind: ClassVar[str] = "price"
+
     name: str
     type: str
     ok: bool
     message: str
     sample_count: int = 0
     checked_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    duration_seconds: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind,
             "name": self.name,
             "type": self.type,
             "ok": self.ok,
             "message": self.message,
             "sample_count": self.sample_count,
             "checked_at": self.checked_at.isoformat(),
+            "duration_seconds": round(self.duration_seconds, 2),
         }
 
 

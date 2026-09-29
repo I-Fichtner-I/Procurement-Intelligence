@@ -173,6 +173,9 @@ class SearchQuery:
 class SourceStatus:
     """Ergebnis eines Health-Checks - Basis fuer ``tender-ai doctor``."""
 
+    #: Unterscheidet die beiden Arten von Quellen in einer gemeinsamen Ausgabe.
+    kind: ClassVar[str] = "tender"
+
     name: str
     type: str
     ok: bool
@@ -183,6 +186,7 @@ class SourceStatus:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind,
             "name": self.name,
             "type": self.type,
             "ok": self.ok,

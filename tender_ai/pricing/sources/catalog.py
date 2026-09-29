@@ -313,6 +313,27 @@ class CatalogPriceSource(PriceSource):
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [quote for _score, quote in scored[: query.max_results]]
 
+    def _missing_column_hint(self, field: str, rows: list[dict[str, Any]]) -> str:
+        """Sagen, woran es liegt: fehlende Zuordnung, fehlende Spalte, oder Inhalt.
+
+        Die drei Faelle sehen im Ergebnis gleich aus - eine Null - haben aber
+        verschiedene Ursachen. Sie zu unterscheiden ist der ganze Zweck des
+        Hinweises; eine falsche Vermutung waere schlimmer als keine.
+        """
+        column = self.config.columns.get(field)
+        if not column:
+            return f"Hinweis: fuer '{field}' ist keine Spalte zugeordnet (columns.{field})"
+        if rows and self._field(rows[0], field) is None:
+            available = ", ".join(str(key) for key in rows[0])
+            return (
+                f"Hinweis: Spalte '{column}' (columns.{field}) kommt in der Datei nicht vor. "
+                f"Vorhanden: {available}"
+            )
+        return (
+            f"Hinweis: Spalte '{column}' (columns.{field}) ist vorhanden, aber kein Wert "
+            "darin war lesbar - Format pruefen"
+        )
+
     async def health_check(self) -> PriceSourceStatus:
         """Liste einmal lesen und melden, wie viele Zeilen brauchbar sind."""
         try:
@@ -339,7 +360,14 @@ class CatalogPriceSource(PriceSource):
             f"{len(rows)} Zeile(n), {len(quotes)} mit Bezeichnung, {with_price} mit Preis, "
             f"{calculable} kalkulationsfaehig (Netto ableitbar)"
         )
-        if calculable == 0 and with_price:
+        # Die haeufigsten Einrichtungsfehler beim Namen nennen. Wer eine Liste
+        # eintraegt, sieht sonst nur eine Null und weiss nicht, welche der
+        # siebzehn Spaltenzuordnungen daneben zeigt.
+        if not quotes:
+            message += f" | {self._missing_column_hint('product_name', rows)}"
+        elif not with_price:
+            message += f" | {self._missing_column_hint('amount', rows)}"
+        elif calculable == 0:
             message += " | Hinweis: Netto/Brutto fehlt - 'default_basis' setzen"
         return PriceSourceStatus(
             name=self.name,
